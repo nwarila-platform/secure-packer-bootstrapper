@@ -1,0 +1,22 @@
+name: Verify
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+jobs:
+  bash-quality:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y openssh-client openssl shellcheck
+
+      - name: Verify
+        run: bash scripts/verify.sh

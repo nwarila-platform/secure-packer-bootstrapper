@@ -1,0 +1,5 @@
+artifacts/
+dist/
+test-results/
+*.tmp
+*.log

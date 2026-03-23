@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+script_dir=$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
+repo_root=$(CDPATH= cd -- "${script_dir}/.." && pwd -P)
+
+# shellcheck source=../src/bootstrap_credentials/bootstrap_credentials.sh
+. "${repo_root}/src/bootstrap_credentials/bootstrap_credentials.sh"
+
+bootstrap_credentials_cli "$@"

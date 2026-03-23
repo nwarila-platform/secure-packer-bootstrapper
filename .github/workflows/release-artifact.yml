@@ -1,0 +1,28 @@
+name: Release Artifact
+
+on:
+  release:
+    types:
+      - published
+  workflow_dispatch:
+
+jobs:
+  build-release-script:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y openssh-client openssl shellcheck
+
+      - name: Verify
+        run: bash scripts/verify.sh
+
+      - name: Upload Standalone Script
+        uses: actions/upload-artifact@v4
+        with:
+          name: secure-packer-bootstrapper
+          path: dist/secure-packer-bootstrapper.sh
