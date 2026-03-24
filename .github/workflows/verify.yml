@@ -37,3 +37,29 @@ jobs:
 
       - name: Verify
         run: bash scripts/verify.sh
+
+  verify-rocky:
+    name: Verify (rockylinux-${{ matrix.version }})
+    strategy:
+      fail-fast: false
+      matrix:
+        version:
+          - '8'
+          - '9'
+          - '10'
+    permissions:
+      contents: read
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    container:
+      image: rockylinux/rockylinux:${{ matrix.version }}
+    steps:
+      - name: Install Dependencies
+        run: |
+          dnf install -y git openssh-clients openssl
+
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Verify
+        run: bash scripts/verify.sh

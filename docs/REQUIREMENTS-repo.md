@@ -49,7 +49,8 @@ later:
 Current evidence supports the following contract:
 
 - Operating system versions with current automated execution evidence:
-  - Ubuntu 22.04 LTS and 24.04 LTS
+  - GitHub-hosted Ubuntu 22.04 LTS and 24.04 LTS runners
+  - Official Rocky Linux 8, 9, and 10 container jobs in GitHub Actions
 - Downstream consumer focus:
   - Rocky Linux 8, 9, and 10 image-build repos
   - Ubuntu 22.04 LTS and 24.04 LTS image-build repos
@@ -61,10 +62,10 @@ Current evidence supports the following contract:
   are separately documented and verified.
 - Support claims are bounded by current verification evidence. The repo does
   not claim every future release in a distro family by default.
-- The repo intentionally does not treat container-only Rocky checks as
-  equivalent to GitHub-hosted Ubuntu runner evidence. Rocky is therefore a
-  downstream target context rather than a CI-verified execution-host claim for
-  this repository until first-class Rocky runner evidence exists.
+- The repo documents the evidence model explicitly: Ubuntu is verified on
+  GitHub-hosted runners, and Rocky is verified in official Rocky-maintained
+  container jobs. These surfaces are different and must not be described as
+  interchangeable proof of host-level equivalence.
 - External command requirements are module-specific and must remain documented
   in the nearest module ledger, but the repo-wide contract must still say that
   Linux command availability and file-path assumptions are part of the support
@@ -159,6 +160,9 @@ support statement stays truthful.
   https://man7.org/linux/man-pages/man5/proc_pid_environ.5.html
 - `SR-29`: EditorConfig Specification.  
   https://spec.editorconfig.org/
+- `SR-39`: Rocky Linux Docker Hub repository tags page for official
+  Rocky-maintained container images.  
+  https://hub.docker.com/r/rockylinux/rockylinux/tags
 - `SR-30`: GitHub Docs, "Contexts reference".  
   https://docs.github.com/en/actions/learn-github-actions/contexts
 - `SR-31`: GitHub Docs, "Security hardening for GitHub Actions".  
@@ -927,14 +931,14 @@ Authoritative sources:
 - `SR-23`
 - `SR-24`
 - `SR-14`
+- `SR-39`
 Repository evidence:
 - The repo-wide platform contract now distinguishes between CI-verified
-  execution hosts and downstream consumer targets.
-- The verification workflow now runs on `ubuntu-22.04` and `ubuntu-24.04`.
-- The maintainer decision is that Rocky remains a downstream target context for
-  generated artifacts, but the repo does not currently treat Rocky container
-  checks as equivalent to first-class runner evidence for its own
-  execution-host support claim.
+  environments and downstream consumer targets.
+- The verification workflow now runs on GitHub-hosted `ubuntu-22.04` and
+  `ubuntu-24.04`, plus official Rocky Linux 8, 9, and 10 container jobs.
+- The support statement explicitly distinguishes runner-backed Ubuntu evidence
+  from Rocky container evidence instead of conflating them.
 Applicability analysis:
 - GitHub documents that `runs-on: ubuntu-latest` selects a GitHub-hosted Ubuntu
   runner, and that matrix strategies can create multiple job variants across
@@ -945,9 +949,9 @@ Applicability analysis:
 Upstream / vendor example:
 - GitHub's matrix-strategy docs show how one workflow definition can run across
   multiple operating systems or environment variants.
-- The repository now uses that model for Ubuntu runner variants and narrows its
-  execution-host claim instead of mixing runner-backed Ubuntu evidence with a
-  separate Rocky container evidence model.
+- The repository now uses that model for Ubuntu runner variants and Rocky
+  container variants while documenting the difference between those execution
+  surfaces.
 Requirement:
 - If the repository claims Linux portability across more than one distro family,
   the verification evidence MUST cover at least one RHEL-family environment and

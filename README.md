@@ -17,7 +17,9 @@ the workflow that needs it.
 This repo intentionally supports a narrow, truthful platform contract:
 
 - GNU Bash 4.3+
-- CI-verified execution platforms: Ubuntu 22.04 LTS and 24.04 LTS
+- CI-verified environments:
+  - GitHub-hosted Ubuntu 22.04 LTS and 24.04 LTS runners
+  - official Rocky Linux 8, 9, and 10 container jobs in GitHub Actions
 - downstream consumer focus: Rocky Linux 8, 9, and 10 image-build repos, plus
   Ubuntu 22.04 LTS and 24.04 LTS image-build repos
 
@@ -25,13 +27,16 @@ It does not claim POSIX `sh` compatibility, non-Linux Unix portability, or
 full downstream OS hardening compliance by itself.
 
 These support claims track explicitly verified CI versions. The repo does not
-claim "all future Ubuntu 22.04+" behavior unless CI and docs are updated to
-prove those exact versions.
+claim "all future Rocky 8+" or "all future Ubuntu 22.04+" behavior unless CI
+and docs are updated to prove those exact versions.
 
-The repo intentionally does not treat Rocky container checks as equivalent to
-GitHub-hosted Ubuntu runner evidence. Until first-class Rocky runner evidence
-exists, Rocky remains a downstream target for generated artifacts rather than a
-CI-verified execution-host claim for this repository itself.
+The evidence model is explicit rather than flattened:
+
+- Ubuntu is verified on GitHub-hosted runners
+- Rocky is verified in official Rocky-maintained containers on GitHub Actions
+
+Those are different execution surfaces, and the docs call them out separately
+instead of pretending they are identical.
 
 ## Dependency Contract
 
@@ -42,8 +47,8 @@ CI-verified execution-host claim for this repository itself.
 | Developer and test | `mktemp`, `grep`, `find`, `sed`, `sort`, `stat` | Used by the Bash test suite and local verification helpers |
 | CI and release | `sudo`, distro package manager, `sha256sum`, `gh` | Workflow-surface dependencies, not runtime CLI prerequisites for downstream consumers |
 
-The Ubuntu workflow files show one CI installation recipe, not the generic
-Linux setup story for the runtime CLI itself.
+The workflow files show CI installation recipes for Ubuntu runners and Rocky
+containers, not the generic Linux setup story for the runtime CLI itself.
 
 ## Security Scope
 
@@ -186,5 +191,6 @@ The deeper downstream migration work is documented in
 - self-contained Bash tests under `test/`
 - release bundle build and execution verification
 - GitHub Actions verification on Ubuntu 22.04 and Ubuntu 24.04
+- GitHub Actions verification in official Rocky Linux 8, 9, and 10 containers
 - SHA-pinned external GitHub Actions
 - explicit least-privilege workflow permissions
