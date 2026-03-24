@@ -1,5 +1,5 @@
 if [[ -z ${_SPB_BUNDLE_MODE:-} ]]; then
-  _spb_generate_password_dir=$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P) || return 1
+  _spb_generate_password_dir=$(CDPATH='' cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P) || return 1
   # shellcheck source=../lib/common.sh
   . "${_spb_generate_password_dir}/../lib/common.sh"
   # shellcheck source=../get_random/get_random.sh

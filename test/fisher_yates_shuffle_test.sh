@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # shellcheck source=./testlib.sh
-. "$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)/testlib.sh"
+. "$(CDPATH='' cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)/testlib.sh"
 # shellcheck source=../src/fisher_yates_shuffle/fisher_yates_shuffle.sh
 . "${TEST_ROOT}/src/fisher_yates_shuffle/fisher_yates_shuffle.sh"
 
@@ -52,10 +52,9 @@ done
 temp_dir=$(make_temp_dir)
 trap 'rm -rf "${temp_dir}"' EXIT
 
-GET_RANDOM_OD_BIN=${temp_dir}/missing-od
+# shellcheck disable=SC2034
 problem=(1 2 3)
-run_capture fisher_yates_shuffle problem
-unset GET_RANDOM_OD_BIN
+GET_RANDOM_OD_BIN=${temp_dir}/missing-od run_capture fisher_yates_shuffle problem
 assert_status 127
 assert_stderr_contains 'requires od'
 

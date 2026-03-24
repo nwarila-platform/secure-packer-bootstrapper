@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # shellcheck source=./testlib.sh
-. "$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)/testlib.sh"
+. "$(CDPATH='' cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)/testlib.sh"
 # shellcheck source=../src/generate_password_hash/generate_password_hash.sh
 . "${TEST_ROOT}/src/generate_password_hash/generate_password_hash.sh"
 
@@ -10,11 +10,11 @@ command -v openssl >/dev/null 2>&1 || skip_test 'openssl is required for generat
 
 run_capture generate_password_hash --password 'Sup3r!Secret'
 assert_status 0
-assert_stdout_contains '$6$rounds=10000$'
+assert_stdout_contains "\$6\$rounds=10000\$"
 
 run_capture bash -lc "set -euo pipefail; . '${TEST_ROOT}/src/generate_password_hash/generate_password_hash.sh'; printf '%s\n' 'Sup3r!Secret' | generate_password_hash"
 assert_status 0
-assert_stdout_contains '$6$rounds=10000$'
+assert_stdout_contains "\$6\$rounds=10000\$"
 
 run_capture generate_password_hash --password 'Sup3r!Secret' --salt-length 4
 assert_status 2

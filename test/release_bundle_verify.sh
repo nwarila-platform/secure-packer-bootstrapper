@@ -2,10 +2,11 @@
 set -euo pipefail
 
 # shellcheck source=./testlib.sh
-. "$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)/testlib.sh"
+. "$(CDPATH='' cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)/testlib.sh"
 
 bundle_path="${TEST_ROOT}/dist/secure-packer-bootstrapper.sh"
 [[ -f ${bundle_path} ]] || fail "expected release bundle to exist: ${bundle_path}"
+# shellcheck disable=SC2016
 assert_file_not_contains "${bundle_path}" 'if [[ -z ${_SPB_BUNDLE_MODE:-} ]]; then'
 assert_file_not_contains "${bundle_path}" '# shellcheck source=../'
 assert_file_not_contains "${bundle_path}" '_spb_generate_password_dir='

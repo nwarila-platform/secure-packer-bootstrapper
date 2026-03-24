@@ -1,5 +1,5 @@
 if [[ -z ${_SPB_BUNDLE_MODE:-} ]]; then
-  _spb_bootstrap_credentials_dir=$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P) || return 1
+  _spb_bootstrap_credentials_dir=$(CDPATH='' cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P) || return 1
   # shellcheck source=../lib/common.sh
   . "${_spb_bootstrap_credentials_dir}/../lib/common.sh"
   # shellcheck source=../generate_password/generate_password.sh

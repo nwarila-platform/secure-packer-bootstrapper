@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # shellcheck source=./testlib.sh
-. "$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)/testlib.sh"
+. "$(CDPATH='' cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)/testlib.sh"
 # shellcheck source=../src/generate_password/generate_password.sh
 . "${TEST_ROOT}/src/generate_password/generate_password.sh"
 

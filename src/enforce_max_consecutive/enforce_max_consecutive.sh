@@ -1,5 +1,5 @@
 if [[ -z ${_SPB_BUNDLE_MODE:-} ]]; then
-  _spb_enforce_max_consecutive_dir=$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P) || return 1
+  _spb_enforce_max_consecutive_dir=$(CDPATH='' cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P) || return 1
   # shellcheck source=../lib/common.sh
   . "${_spb_enforce_max_consecutive_dir}/../lib/common.sh"
   unset _spb_enforce_max_consecutive_dir

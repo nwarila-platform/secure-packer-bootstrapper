@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # shellcheck source=./testlib.sh
-. "$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)/testlib.sh"
+. "$(CDPATH='' cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)/testlib.sh"
 
 temp_dir=$(make_temp_dir)
 trap 'rm -rf "${temp_dir}"' EXIT

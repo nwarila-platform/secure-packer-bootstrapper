@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # shellcheck source=./testlib.sh
-. "$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)/testlib.sh"
+. "$(CDPATH='' cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)/testlib.sh"
 # shellcheck source=../src/get_random/get_random.sh
 . "${TEST_ROOT}/src/get_random/get_random.sh"
 
@@ -54,9 +54,7 @@ assert_stderr_contains 'COUNT'
 temp_dir=$(make_temp_dir)
 trap 'rm -rf "${temp_dir}"' EXIT
 
-GET_RANDOM_OD_BIN=${temp_dir}/missing-od
-run_capture get_random 1
-unset GET_RANDOM_OD_BIN
+GET_RANDOM_OD_BIN=${temp_dir}/missing-od run_capture get_random 1
 assert_status 127
 assert_stderr_contains 'requires od'
 
@@ -67,10 +65,7 @@ printf '12 13\n'
 EOF
 chmod +x "${fake_od}"
 printf 'abc' > "${temp_dir}/entropy"
-GET_RANDOM_OD_BIN=${fake_od}
-GET_RANDOM_URANDOM_PATH=${temp_dir}/entropy
-run_capture get_random 10
-unset GET_RANDOM_OD_BIN GET_RANDOM_URANDOM_PATH
+GET_RANDOM_OD_BIN=${fake_od} GET_RANDOM_URANDOM_PATH=${temp_dir}/entropy run_capture get_random 10
 assert_status 1
 assert_stderr_contains 'short read'
 
