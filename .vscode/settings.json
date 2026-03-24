@@ -1,0 +1,34 @@
+{
+  //region ------ [ Microsoft Visual Studio Code: Settings ] -------------------------------- //
+
+  "editor.tabSize": 2,
+  "editor.insertSpaces": true,
+  "editor.autoIndent": "advanced",
+  "editor.renderWhitespace": "all",
+  "editor.rulers": [
+    { "color": "#9a4dff", "column": 98 },
+    { "color": "#575757", "column": 96 }
+  ],
+
+  //endregion --- [ Microsoft Visual Studio Code: Settings ] -------------------------------- //
+
+  //region ------ [ Extensions ] ------------------------------------------------------------ //
+
+    //region ------ [ Extensions: Explicit Folding ] ---------------------------------------- //
+
+    "explicitFolding.debug": false,
+    "explicitFolding.rules": {
+      "*": {
+        "beginRegex": "^[\\s]*#region ------ \\[ .* \\] -+ #[\\s]*$",
+        "endRegex":   "^[\\s]*#endregion --- \\[ .* \\] -+ #[\\s]*$"
+      },
+      "jsonc": {
+        "beginRegex": "^[\\s]*\\/\\/region ------ \\[ .* \\] -+ \\/\\/[\\s]*$",
+        "endRegex":   "^[\\s]*\\/\\/endregion --- \\[ .* \\] -+ \\/\\/[\\s]*$"
+      }
+    },
+
+    //endregion --- [ Extensions: Explicit Folding ] ---------------------------------------- //
+
+  //endregion --- [ Extensions ] ------------------------------------------------------------ //
+}

@@ -1,51 +1,102 @@
 # secure-packer-bootstrapper
 
-`secure-packer-bootstrapper` is a modular Bash credential bootstrapper for
-Packer, Kickstart, and Ansible-driven image builds. It generates a secure
-deploy-user password, a Linux-compatible SHA-512 crypt password hash, a
-passphrase-protected SSH keypair, and release-ready artifacts that can be
-handed to downstream repos such as
-`Secure-RockyLinux9-Template`.
+`secure-packer-bootstrapper` is a Bash bootstrapper for Linux image-build
+workflows. It generates the short-lived credentials needed to:
 
-## What It Builds
+- create a deploy user during install time
+- let the current shell map install inputs into `PKR_VAR_*`
+- keep the plaintext password available only for post-install sudo / become
+- generate a passphrase-protected SSH keypair for SSH-based provisioning
 
-- An unbiased `/dev/urandom`-backed integer primitive: `get_random`
-- A reusable Fisher-Yates array shuffle primitive
-- A deterministic max-consecutive-class enforcer for generated passwords
-- A configurable password generator with minimum-class guarantees
-- A SHA-512 crypt password hash generator for Kickstart `--iscrypted` usage
-- A passphrase-protected SSH keypair generator with FIPS-friendly defaults
-- A top-level bootstrap command that emits:
-  - `bootstrap.env`
-  - `packer.auto.pkrvars.json`
-  - password/hash/passphrase secret files
-  - SSH private/public key files
-  - a manifest describing the generated artifact set
+This repo exists to replace long-lived static GitHub secrets with runtime
+bootstrap material that is generated, masked, reviewed, and cleaned up inside
+the workflow that needs it.
 
-## Repo Layout
+## Supported Platforms
 
-```text
-.
-|-- bin/
-|   `-- secure-packer-bootstrapper
-|-- scripts/
-|   |-- build-release.sh
-|   |-- lint.sh
-|   |-- test.sh
-|   `-- verify.sh
-|-- src/
-|   |-- bootstrap_credentials/
-|   |-- enforce_max_consecutive/
-|   |-- fisher_yates_shuffle/
-|   |-- generate_password/
-|   |-- generate_password_hash/
-|   |-- generate_ssh_keypair/
-|   |-- get_random/
-|   `-- lib/
-`-- test/
-```
+This repo intentionally supports a narrow, truthful platform contract:
 
-## Local Usage
+- GNU Bash 4.3+
+- CI-verified execution platforms: Ubuntu 22.04 LTS and 24.04 LTS
+- downstream consumer focus: Rocky Linux 8, 9, and 10 image-build repos, plus
+  Ubuntu 22.04 LTS and 24.04 LTS image-build repos
+
+It does not claim POSIX `sh` compatibility, non-Linux Unix portability, or
+full downstream OS hardening compliance by itself.
+
+These support claims track explicitly verified CI versions. The repo does not
+claim "all future Ubuntu 22.04+" behavior unless CI and docs are updated to
+prove those exact versions.
+
+The repo intentionally does not treat Rocky container checks as equivalent to
+GitHub-hosted Ubuntu runner evidence. Until first-class Rocky runner evidence
+exists, Rocky remains a downstream target for generated artifacts rather than a
+CI-verified execution-host claim for this repository itself.
+
+## Dependency Contract
+
+| Surface | Required items | Notes |
+|---|---|---|
+| Mandatory runtime | Bash 4.3+, `/dev/urandom`, `od`, `openssl`, `ssh-keygen`, `mkdir`, `chmod`, `mv` | Needed to generate hashes, keys, and the minimal bootstrap output set |
+| Optional runtime | none | The bootstrap flow no longer depends on `ssh-agent` or distro-specific helper commands |
+| Developer and test | `mktemp`, `grep`, `find`, `sed`, `sort`, `stat` | Used by the Bash test suite and local verification helpers |
+| CI and release | `sudo`, distro package manager, `sha256sum`, `gh` | Workflow-surface dependencies, not runtime CLI prerequisites for downstream consumers |
+
+The Ubuntu workflow files show one CI installation recipe, not the generic
+Linux setup story for the runtime CLI itself.
+
+## Security Scope
+
+This repo only makes claims about the script and the artifacts it generates.
+
+- It enforces safe key-generation settings through argument validation:
+  only RSA and ECDSA are exposed, and insecure key sizes are rejected.
+- It generates SHA-512 crypt password hashes with `rounds=10000`.
+- SSH key generation still uses `ssh-keygen -N`, so the key passphrase crosses
+  the local argv boundary briefly during generation. Use trusted runners and
+  temporary workspaces for that step.
+- It does not claim that the downstream operating system, image, or workflow is
+  compliant with any external hardening benchmark by itself.
+
+## What It Generates
+
+The bootstrap flow produces:
+
+- a deploy-user plaintext password
+- a SHA-512 crypt password hash with `rounds=10000`
+- a passphrase-protected SSH private key and matching public key
+
+The bootstrap shell-export contract is:
+
+- `SPB_DEPLOY_USER_PASSWORD`
+- `SPB_DEPLOY_USER_PASSWORD_HASH`
+- `SPB_SSH_KEY_PASSPHRASE`
+- `SPB_SSH_PRIVATE_KEY_FILE`
+- `SPB_SSH_PUBLIC_KEY_FILE`
+
+The intended downstream model is:
+
+- Kickstart uses the password hash with `user --iscrypted`
+- the current shell maps the exported hash into whatever `PKR_VAR_*` contract Packer expects
+- SSH key authentication is used for login
+- the plaintext password is retained only for sudo / become
+
+## Learning Goal
+
+This repo is also a teaching repo for first-year computer science students.
+The project-wide readability rules live in
+`[docs/STUDENT-FIRST-STANDARDS.md](docs/STUDENT-FIRST-STANDARDS.md)`.
+
+If you are new to the repo, read these in order:
+
+1. `README.md`
+2. `docs/STUDENT-FIRST-STANDARDS.md`
+3. `docs/MODULE-DECOMPOSITION.md`
+4. the relevant `src/<module>/REQUIREMENTS.md`
+5. the matching source file
+6. the matching test file
+
+## Local Demo Use
 
 Run the full verification flow:
 
@@ -53,38 +104,87 @@ Run the full verification flow:
 bash scripts/verify.sh
 ```
 
-Generate a bootstrap artifact set into `artifacts/bootstrap`:
+Generate a local artifact set in the workspace and export the secret values
+into the current shell:
 
 ```bash
-bin/secure-packer-bootstrapper --skip-agent
+eval "$(bin/secure-packer-bootstrapper)"
 ```
 
-Generate a FIPS-enforced artifact set with a custom deploy user:
+These examples are for local learning and review. They intentionally write
+artifacts into the workspace so you can inspect them.
+
+## Same-Step Use
+
+The bootstrapper is intended to run in the same shell step as Packer.
+
+Example:
 
 ```bash
-bin/secure-packer-bootstrapper \
-  --deploy-user builder \
-  --require-fips \
-  --output-dir artifacts/bootstrap-fips
+eval "$("${RUNNER_TEMP}/secure-packer-bootstrapper.sh" --output-dir "${RUNNER_TEMP}/spb")"
+export PKR_VAR_deploy_user_password_hash="${SPB_DEPLOY_USER_PASSWORD_HASH}"
+packer build .
 ```
 
-## Downstream Integration
+The script prints shell-safe `export ...` lines to stdout. Capture that stdout
+with `eval "$( ... )"` in the same shell that will launch Packer. Do not run
+it under `set -x`, and do not pipe the output through logging commands.
 
-The generated `bootstrap.env` file exports the variables that the current
-`proxmox-packer-framework` contract expects today:
+## Artifact Sensitivity
 
-- `PKR_VAR_deploy_user_name`
-- `PKR_VAR_deploy_user_password`
-- `PKR_VAR_deploy_user_public_key`
+Treat every generated artifact as sensitive unless it is obviously public.
 
-It also exports `SPB_DEPLOY_USER_PASSWORD_HASH` so downstream Kickstart
-templates can move from `--plaintext` to `--iscrypted` without losing the
-plain password that Packer and Ansible still need for first-hop access.
+| Artifact or value | Sensitivity | Intended use |
+|---|---|---|
+| `SPB_DEPLOY_USER_PASSWORD` | secret | sudo / become only |
+| `SPB_DEPLOY_USER_PASSWORD_HASH` | sensitive | install-time password hash |
+| `SPB_SSH_KEY_PASSPHRASE` | secret | unlock generated private key |
+| `ssh/<keyname>` | secret | provisioning login key |
+| `ssh/<keyname>.pub` | low | public key distribution |
+
+For CI:
+
+- generate artifacts under `$RUNNER_TEMP`
+- evaluate the script output directly in the shell that will run Packer
+- delete the bootstrap directory in a cleanup step
+- keep the generated private key on disk and let downstream tooling decide how
+  to load it
+
+## Release Assets
+
+Published releases provide:
+
+- `secure-packer-bootstrapper.sh`
+- `secure-packer-bootstrapper.sh.sha256`
+- GitHub build provenance attestations for those release assets
+
+Downstream repos should monitor published releases, pin a reviewed release tag
+and checksum, and update them through pull requests rather than following
+branches directly.
+
+The release workflow now creates the release with both assets attached at
+creation time and publishes GitHub build provenance attestations for them.
+The checksum proves file equality after download. The attestation proves the
+asset came from this repo's release workflow. This repo still does not claim
+immutable-release protection unless that GitHub repository setting is enabled.
+
+Example verification flow after download:
+
+```bash
+sha256sum -c secure-packer-bootstrapper.sh.sha256
+gh attestation verify secure-packer-bootstrapper.sh \
+  --repo NWarila/secure-packer-bootstrapper \
+  --signer-workflow NWarila/secure-packer-bootstrapper/.github/workflows/release-artifact.yml
+```
+
+The deeper downstream migration work is documented in
+`[docs/DOWNSTREAM-MIGRATION.md](docs/DOWNSTREAM-MIGRATION.md)`.
 
 ## Quality Gates
 
-- `bash -n` syntax validation across the repo
-- Self-contained Bash unit/integration tests under `test/`
-- Optional `shellcheck` integration when installed
-- GitHub Actions verification on every push and pull request
-- Standalone release-bundle build in `dist/secure-packer-bootstrapper.sh`
+- Bash syntax checks
+- self-contained Bash tests under `test/`
+- release bundle build and execution verification
+- GitHub Actions verification on Ubuntu 22.04 and Ubuntu 24.04
+- SHA-pinned external GitHub Actions
+- explicit least-privilege workflow permissions

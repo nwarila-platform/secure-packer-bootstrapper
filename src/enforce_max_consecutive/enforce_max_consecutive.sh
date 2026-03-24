@@ -14,13 +14,15 @@ enforce_max_consecutive() {
   local result_name=${2:-}
   local target_length_s=${3:-}
   local max_consecutive_s=${4:-}
-  local -i target_length max_consecutive queue_size attempt processed_candidates
+  local -i target_length max_consecutive current_queue_size copy_index candidate_index processed_candidates
+  local -i queue_head queue_tail active_queue_size
   local prev_class=''
   local current_class=''
   local current_char=''
   local -i run_length=0
-  local accepted=0
+  local accepted_this_round=0
 
+  # Phase 1: validate the public contract before we start mutating arrays.
   if (( $# != 4 )); then
     printf 'error: enforce_max_consecutive takes exactly 4 arguments (got %d)\n' "$#" >&2
     return 2
@@ -75,25 +77,39 @@ enforce_max_consecutive() {
     return 2
   fi
 
+  # Always clear the caller-provided output array so success and failure start
+  # from a known state.
   result_ref=()
 
+  # Fast path: if the limit is disabled, or if the limit is already larger than
+  # the whole result, the first TARGET_LENGTH characters are automatically valid.
   if (( max_consecutive == 0 || max_consecutive >= target_length )); then
-    for ((attempt = 0; attempt < target_length; attempt++)); do
-      result_ref+=("${input_ref[attempt]}")
+    for ((copy_index = 0; copy_index < target_length; copy_index++)); do
+      result_ref+=("${input_ref[copy_index]}")
     done
     return 0
   fi
 
+  # The queue starts as a copy of the candidate array.
+  # When a character would break the run-length rule, we move it to the back of
+  # the queue so it can be reconsidered later in a different context. We track
+  # the front and back indices explicitly so we do not keep copying the whole
+  # queue on every candidate pop.
   local -a queue=("${input_ref[@]}")
   processed_candidates=0
+  queue_head=0
+  queue_tail=${#queue[@]}
+  active_queue_size=${#queue[@]}
 
   while (( ${#result_ref[@]} < target_length )); do
-    queue_size=${#queue[@]}
-    accepted=0
+    current_queue_size=${active_queue_size}
+    accepted_this_round=0
 
-    for ((attempt = 0; attempt < queue_size; attempt++)); do
-      current_char=${queue[0]}
-      queue=("${queue[@]:1}")
+    for ((candidate_index = 0; candidate_index < current_queue_size; candidate_index++)); do
+      current_char=${queue[queue_head]}
+      unset 'queue[queue_head]'
+      (( queue_head++ ))
+      (( active_queue_size-- ))
       (( processed_candidates++ ))
 
       current_class=$(spb_classify_char "${current_char}") || {
@@ -102,7 +118,9 @@ enforce_max_consecutive() {
       }
 
       if (( ${#result_ref[@]} > 0 )) && [[ ${current_class} == "${prev_class}" ]] && (( run_length >= max_consecutive )); then
-        queue+=("${current_char}")
+        queue[queue_tail]=${current_char}
+        (( queue_tail++ ))
+        (( active_queue_size++ ))
         continue
       fi
 
@@ -113,11 +131,11 @@ enforce_max_consecutive() {
         run_length=1
         prev_class=${current_class}
       fi
-      accepted=1
+      accepted_this_round=1
       break
     done
 
-    if (( ! accepted )); then
+    if (( ! accepted_this_round )); then
       local -i remaining_needed=$((target_length - ${#result_ref[@]}))
       result_ref=()
       printf 'error: enforce_max_consecutive: reserve exhausted after %d candidates (need %d more characters)\n' \

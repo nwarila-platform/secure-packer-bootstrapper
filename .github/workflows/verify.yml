@@ -6,12 +6,29 @@ on:
       - main
   pull_request:
 
+concurrency:
+  group: verify-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
 jobs:
-  bash-quality:
-    runs-on: ubuntu-latest
+  verify-ubuntu:
+    name: Verify (${{ matrix.runner }})
+    strategy:
+      fail-fast: false
+      matrix:
+        runner:
+          - ubuntu-22.04
+          - ubuntu-24.04
+    permissions:
+      contents: read
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 20
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
       - name: Install Dependencies
         run: |

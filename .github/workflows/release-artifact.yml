@@ -1,17 +1,36 @@
 name: Release Artifact
 
 on:
-  release:
-    types:
-      - published
+  push:
+    tags:
+      - 'v*'
   workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Release tag to create
+        required: true
+        type: string
+
+concurrency:
+  group: release-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
 
 jobs:
-  build-release-script:
-    runs-on: ubuntu-latest
+  build-and-release:
+    permissions:
+      contents: write
+      attestations: write
+      id-token: write
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
 
       - name: Install Dependencies
         run: |
@@ -21,8 +40,37 @@ jobs:
       - name: Verify
         run: bash scripts/verify.sh
 
-      - name: Upload Standalone Script
-        uses: actions/upload-artifact@v4
+      - name: Create Release Checksum
+        run: sha256sum dist/secure-packer-bootstrapper.sh > dist/secure-packer-bootstrapper.sh.sha256
+
+      - name: Attest Release Assets
+        uses: actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a # v3
         with:
-          name: secure-packer-bootstrapper
-          path: dist/secure-packer-bootstrapper.sh
+          subject-path: |
+            dist/secure-packer-bootstrapper.sh
+            dist/secure-packer-bootstrapper.sh.sha256
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          INPUT_RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          set -euo pipefail
+
+          if [[ "${GITHUB_EVENT_NAME}" == "push" ]]; then
+            release_tag="${GITHUB_REF_NAME}"
+            gh release create "${release_tag}" \
+              dist/secure-packer-bootstrapper.sh \
+              dist/secure-packer-bootstrapper.sh.sha256 \
+              --verify-tag \
+              --title "${release_tag}" \
+              --generate-notes
+          else
+            release_tag="${INPUT_RELEASE_TAG}"
+            gh release create "${release_tag}" \
+              dist/secure-packer-bootstrapper.sh \
+              dist/secure-packer-bootstrapper.sh.sha256 \
+              --target "${GITHUB_SHA}" \
+              --title "${release_tag}" \
+              --generate-notes
+          fi

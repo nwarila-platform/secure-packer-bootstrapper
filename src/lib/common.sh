@@ -3,6 +3,7 @@ if [[ -n ${_SPB_COMMON_SH_LOADED:-} ]]; then
 fi
 readonly _SPB_COMMON_SH_LOADED=1
 
+# Fail early when a required shell function has not been sourced yet.
 spb_require_function() {
   local function_name=${1:-}
   local caller=${2:-module}
@@ -13,6 +14,7 @@ spb_require_function() {
   fi
 }
 
+# Fail early when an external command is missing from the host system.
 spb_require_command() {
   local command_name=${1:-}
   local caller=${2:-module}
@@ -23,6 +25,7 @@ spb_require_command() {
   fi
 }
 
+# Check whether a variable exists and is a normal indexed Bash array.
 spb_is_indexed_array() {
   local variable_name=${1:-}
   local declaration
@@ -31,10 +34,12 @@ spb_is_indexed_array() {
   [[ ${declaration} == declare\ -a* ]]
 }
 
+# Accept only unsigned base-10 integer literals such as 0, 1, or 42.
 spb_is_uint_literal() {
   [[ $# -eq 1 ]] && [[ ${1} =~ ^(0|[1-9][0-9]*)$ ]]
 }
 
+# Convert a single character into its ASCII code.
 spb_ord() {
   if [[ $# -ne 1 || -z ${1} ]]; then
     return 1
@@ -43,6 +48,7 @@ spb_ord() {
   LC_ALL=C printf '%d' "'${1}"
 }
 
+# Ask whether a character belongs to one of the four fixed project classes.
 spb_char_in_class() {
   local class_name=${1:-}
   local character=${2:-}
@@ -74,6 +80,7 @@ spb_char_in_class() {
   esac
 }
 
+# Convert one character into its class name: upper, lower, digit, or special.
 spb_classify_char() {
   local character=${1:-}
   local code
@@ -91,6 +98,7 @@ spb_classify_char() {
   fi
 }
 
+# Split a string into a dense indexed array of one-character strings.
 spb_string_to_array() {
   local input_string=${1-}
   local output_name=${2:-}
@@ -104,6 +112,7 @@ spb_string_to_array() {
   done
 }
 
+# Join every element of an array into one string with no separators.
 spb_array_to_string() {
   local array_name=${1:-}
   local -n array_ref=${array_name}
@@ -111,6 +120,7 @@ spb_array_to_string() {
   printf '%s' "${array_ref[@]}"
 }
 
+# Return the first repeated occurrence of each duplicated character.
 spb_find_duplicate_chars() {
   local input_string=${1-}
   local duplicates=''
@@ -134,28 +144,7 @@ spb_find_duplicate_chars() {
   printf '%s' "${duplicates}"
 }
 
-spb_filter_chars() {
-  local input_string=${1-}
-  local exclude_string=${2-}
-  local output=''
-  local character
-  local -i index
-  declare -A excluded=()
-
-  for ((index = 0; index < ${#exclude_string}; index++)); do
-    excluded["${exclude_string:index:1}"]=1
-  done
-
-  for ((index = 0; index < ${#input_string}; index++)); do
-    character=${input_string:index:1}
-    if [[ -z ${excluded["${character}"]+x} ]]; then
-      output+="${character}"
-    fi
-  done
-
-  printf '%s' "${output}"
-}
-
+# Return the characters that do not belong to the requested class.
 spb_invalid_chars_for_class() {
   local class_name=${1:-}
   local input_string=${2-}
@@ -177,23 +166,13 @@ spb_invalid_chars_for_class() {
   printf '%s' "${invalid}"
 }
 
+# Keep the default special-character set in one place.
 spb_default_special_chars() {
   printf '%s' "!@#\$%^&*()-_=+[]{}|;:',.<>?/\\\`~"
 }
 
+# Produce a shell-safe single-quoted string literal.
 spb_shell_quote() {
   local value=${1-}
   printf "'%s'" "${value//\'/\'\"\'\"\'}"
-}
-
-spb_json_escape() {
-  local value=${1-}
-
-  value=${value//\\/\\\\}
-  value=${value//\"/\\\"}
-  value=${value//$'\n'/\\n}
-  value=${value//$'\r'/\\r}
-  value=${value//$'\t'/\\t}
-
-  printf '%s' "${value}"
 }

@@ -14,10 +14,12 @@ generate_password_hash() (
 
   local password=''
   local salt_length_s=16
+  local rounds=10000
   local option
   local openssl_bin=${GENERATE_PASSWORD_HASH_OPENSSL_BIN:-openssl}
   local salt_alphabet='abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789./'
   local salt=''
+  local salt_spec=''
   local hash_output
   local draw_output
   local draw_index
@@ -91,7 +93,9 @@ generate_password_hash() (
     salt+="${salt_chars[draw_index]}"
   done <<< "${draw_output}"
 
-  hash_output=$(printf '%s\n' "${password}" | "${openssl_bin}" passwd -6 -stdin -salt "${salt}" 2>/dev/null) || {
+  # OpenSSL's `passwd` command accepts SHA-512 rounds through the salt setting.
+  salt_spec="rounds=${rounds}\$${salt}"
+  hash_output=$(printf '%s\n' "${password}" | "${openssl_bin}" passwd -6 -stdin -salt "${salt_spec}" 2>/dev/null) || {
     printf 'error: generate_password_hash: openssl passwd failed\n' >&2
     return 1
   }

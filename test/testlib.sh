@@ -64,6 +64,44 @@ assert_file_exists() {
   [[ -f ${1} ]] || fail "expected file to exist: ${1}"
 }
 
+assert_file_contains() {
+  local path=${1}
+  local needle=${2}
+
+  grep -F -- "${needle}" "${path}" >/dev/null 2>&1 || fail "expected file ${path} to contain ${needle}"
+}
+
+assert_file_not_contains() {
+  local path=${1}
+  local needle=${2}
+
+  if grep -F -- "${needle}" "${path}" >/dev/null 2>&1; then
+    fail "expected file ${path} not to contain ${needle}"
+  fi
+
+  return 0
+}
+
+assert_not_exists() {
+  [[ ! -e ${1} ]] || fail "expected path not to exist: ${1}"
+}
+
+assert_file_mode() {
+  local path=${1}
+  local expected=${2}
+  local actual
+
+  if actual=$(stat -c '%a' "${path}" 2>/dev/null); then
+    :
+  elif actual=$(stat -f '%Lp' "${path}" 2>/dev/null); then
+    :
+  else
+    fail "could not read file mode for ${path}"
+  fi
+
+  [[ ${actual} == "${expected}" ]] || fail "expected mode ${expected} for ${path}, got ${actual}"
+}
+
 assert_dir_exists() {
   [[ -d ${1} ]] || fail "expected directory to exist: ${1}"
 }

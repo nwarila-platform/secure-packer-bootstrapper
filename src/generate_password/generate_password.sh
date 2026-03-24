@@ -4,10 +4,6 @@ if [[ -z ${_SPB_BUNDLE_MODE:-} ]]; then
   . "${_spb_generate_password_dir}/../lib/common.sh"
   # shellcheck source=../get_random/get_random.sh
   . "${_spb_generate_password_dir}/../get_random/get_random.sh"
-  # shellcheck source=../fisher_yates_shuffle/fisher_yates_shuffle.sh
-  . "${_spb_generate_password_dir}/../fisher_yates_shuffle/fisher_yates_shuffle.sh"
-  # shellcheck source=../enforce_max_consecutive/enforce_max_consecutive.sh
-  . "${_spb_generate_password_dir}/../enforce_max_consecutive/enforce_max_consecutive.sh"
   unset _spb_generate_password_dir
 fi
 
@@ -27,7 +23,6 @@ generate_password() (
   local min_digit_s=1
   local min_special_s=1
   local max_consecutive_s=3
-  local exclude_chars=''
   local option
   local invalid_chars
   local duplicate_chars
@@ -35,26 +30,39 @@ generate_password() (
   local password
   local draw_output
   local draw_index
-  local enforce_status
   local line
   local class_name
   local character
-  local character_class
-  local -i attempt max_attempts=16
+  local prev_class=''
+  local selected_class
+  local od_bin
+  local urandom_path=${GET_RANDOM_URANDOM_PATH:-/dev/urandom}
+  local byte_dump byte
   local -i length min_upper min_lower min_digit min_special max_consecutive minimum_sum
-  local -i candidate_target fill_count
-  local -i upper_count=0 lower_count=0 digit_count=0 special_count=0
+  local -i fill_count remaining_slots total_weight cumulative_weight
+  local -i remaining_upper remaining_lower remaining_digit remaining_special
+  local -i candidate_upper candidate_lower candidate_digit candidate_special
+  local -i largest_count other_total
+  local -i run_length=0
+  local -i buffered_bytes=0 buffer_index=0 selector_draw scanned
+  local -i upper_boundary lower_boundary digit_boundary
+  local -i upper_cursor=0 lower_cursor=0 digit_cursor=0 special_cursor=0
   local -a pool_upper=()
   local -a pool_lower=()
   local -a pool_digit=()
   local -a pool_special=()
   local -a pool_combined=()
-  local -a candidates=()
+  local -a random_bytes=()
+  local -a draw_upper=()
+  local -a draw_lower=()
+  local -a draw_digit=()
+  local -a draw_special=()
   local -a result=()
   local IFS=$' \t\n'
 
   special=$(spb_default_special_chars)
 
+  # Phase 1: parse the public command-line options.
   while (( $# > 0 )); do
     option=${1}
     case "${option}" in
@@ -178,18 +186,6 @@ generate_password() (
         max_consecutive_s=${option#*=}
         shift
         ;;
-      --exclude-chars)
-        if (( $# < 2 )); then
-          printf "error: option '%s' requires a value\n" "${option}" >&2
-          return 2
-        fi
-        exclude_chars=${2}
-        shift 2
-        ;;
-      --exclude-chars=*)
-        exclude_chars=${option#*=}
-        shift
-        ;;
       --)
         shift
         if (( $# > 0 )); then
@@ -204,6 +200,7 @@ generate_password() (
     esac
   done
 
+  # Phase 2: validate numeric inputs before converting them to integers.
   for option in \
     "--length:${length_s}" \
     "--min-upper:${min_upper_s}" \
@@ -241,6 +238,7 @@ generate_password() (
     fi
   done
 
+  # Phase 3: validate the characters assigned to each class.
   for class_name in upper lower digit special; do
     case "${class_name}" in
       upper)
@@ -272,16 +270,7 @@ generate_password() (
     fi
   done
 
-  upper=$(spb_filter_chars "${upper}" "${exclude_chars}")
-  lower=$(spb_filter_chars "${lower}" "${exclude_chars}")
-  digit=$(spb_filter_chars "${digit}" "${exclude_chars}")
-  special=$(spb_filter_chars "${special}" "${exclude_chars}")
-
-  if [[ -z ${upper}${lower}${digit}${special} ]]; then
-    printf 'error: --exclude-chars removed all characters from every class\n' >&2
-    return 2
-  fi
-
+  # Phase 4: verify the remaining configuration is satisfiable.
   if (( min_upper > 0 )) && [[ -z ${upper} ]]; then
     printf "error: class 'upper' is empty but --min-upper is %d\n" "${min_upper}" >&2
     return 2
@@ -305,137 +294,300 @@ generate_password() (
     return 2
   fi
 
+  # Phase 5: make sure the lower-level random generator was sourced.
   spb_require_function get_random "${caller}" || return $?
-  spb_require_function fisher_yates_shuffle "${caller}" || return $?
-  spb_require_function enforce_max_consecutive "${caller}" || return $?
 
-  for ((attempt = 1; attempt <= max_attempts; attempt++)); do
-    active_combined=''
-    upper_count=0
-    lower_count=0
-    digit_count=0
-    special_count=0
-    pool_upper=()
-    pool_lower=()
-    pool_digit=()
-    pool_special=()
-    pool_combined=()
-    candidates=()
-    result=()
+  od_bin=${GET_RANDOM_OD_BIN:-}
+  if [[ -z ${od_bin} ]]; then
+    od_bin=$(type -P od 2>/dev/null) || {
+      printf 'error: generate_password requires od but it is not available\n' >&2
+      return 127
+    }
+  elif [[ ! -x ${od_bin} ]]; then
+    printf 'error: generate_password requires od but it is not available\n' >&2
+    return 127
+  fi
 
-    if [[ -n ${upper} ]]; then
-      spb_string_to_array "${upper}" pool_upper
-      fisher_yates_shuffle pool_upper || return $?
-      active_combined+="${upper}"
-    fi
+  if [[ ! -r ${urandom_path} ]]; then
+    printf 'error: generate_password: %s is not readable\n' "${urandom_path}" >&2
+    return 1
+  fi
 
-    if [[ -n ${lower} ]]; then
-      spb_string_to_array "${lower}" pool_lower
-      fisher_yates_shuffle pool_lower || return $?
-      active_combined+="${lower}"
-    fi
+  # Draw one uniformly random index from [0, SPAN) using a buffered entropy
+  # stream so the class-placement loop does not spawn `od` on every step.
+  spb_generate_password_draw_index() {
+    local -i span=${1}
+    local -i acceptance_limit=$((256 - (256 % span)))
 
-    if [[ -n ${digit} ]]; then
-      spb_string_to_array "${digit}" pool_digit
-      fisher_yates_shuffle pool_digit || return $?
-      active_combined+="${digit}"
-    fi
+    while :; do
+      if (( buffered_bytes - buffer_index < 1 )); then
+        byte_dump=$("${od_bin}" -An -v -N 256 -t u1 "${urandom_path}" 2>/dev/null) || {
+          printf 'error: generate_password: od failed while reading entropy\n' >&2
+          return 1
+        }
 
-    if [[ -n ${special} ]]; then
-      spb_string_to_array "${special}" pool_special
-      fisher_yates_shuffle pool_special || return $?
-      active_combined+="${special}"
-    fi
+        buffer_index=0
+        buffered_bytes=0
+        scanned=0
+        for byte in ${byte_dump}; do
+          [[ ${byte} =~ ^[0-9]+$ ]] || continue
+          if (( byte < 0 || byte > 255 )); then
+            printf 'error: generate_password: unexpected byte value from od: %s\n' "${byte}" >&2
+            return 1
+          fi
+          random_bytes[buffered_bytes]=${byte}
+          (( buffered_bytes++ ))
+          (( scanned++ ))
+        done
 
-    spb_string_to_array "${active_combined}" pool_combined
-    fisher_yates_shuffle pool_combined || return $?
-
-    if (( min_upper > 0 )); then
-      draw_output=$(get_random "${min_upper}" 0 "${#pool_upper[@]}") || return $?
-      while IFS= read -r line; do
-        candidates+=("${pool_upper[line]}")
-      done <<< "${draw_output}"
-    fi
-    if (( min_lower > 0 )); then
-      draw_output=$(get_random "${min_lower}" 0 "${#pool_lower[@]}") || return $?
-      while IFS= read -r line; do
-        candidates+=("${pool_lower[line]}")
-      done <<< "${draw_output}"
-    fi
-    if (( min_digit > 0 )); then
-      draw_output=$(get_random "${min_digit}" 0 "${#pool_digit[@]}") || return $?
-      while IFS= read -r line; do
-        candidates+=("${pool_digit[line]}")
-      done <<< "${draw_output}"
-    fi
-    if (( min_special > 0 )); then
-      draw_output=$(get_random "${min_special}" 0 "${#pool_special[@]}") || return $?
-      while IFS= read -r line; do
-        candidates+=("${pool_special[line]}")
-      done <<< "${draw_output}"
-    fi
-
-    candidate_target=$((length * 2))
-    fill_count=$((candidate_target - ${#candidates[@]}))
-    if (( fill_count > 0 )); then
-      draw_output=$(get_random "${fill_count}" 0 "${#pool_combined[@]}") || return $?
-      while IFS= read -r line; do
-        draw_index=$((10#${line}))
-        candidates+=("${pool_combined[draw_index]}")
-      done <<< "${draw_output}"
-    fi
-
-    fisher_yates_shuffle candidates || return $?
-
-    if (( max_consecutive == 0 )); then
-      result=("${candidates[@]:0:length}")
-    else
-      result=()
-      enforce_max_consecutive candidates result "${length}" "${max_consecutive}"
-      enforce_status=$?
-      if (( enforce_status != 0 )); then
-        if (( enforce_status != 1 )); then
-          return "${enforce_status}"
-        fi
-        if (( attempt == max_attempts )); then
-          printf 'error: generate_password: consecutive-class constraint unsatisfiable after %d attempts\n' "${max_attempts}" >&2
+        if (( scanned != 256 )); then
+          printf 'error: generate_password: short read from od (requested %d bytes, got %d)\n' 256 "${scanned}" >&2
           return 1
         fi
+      fi
+
+      selector_draw=${random_bytes[buffer_index]}
+      (( buffer_index++ ))
+      if (( span == 256 || selector_draw < acceptance_limit )); then
+        selector_draw=$((selector_draw % span))
+        return 0
+      fi
+    done
+  }
+
+  # Phase 6: build the reusable class pools once.
+  if [[ -n ${upper} ]]; then
+    spb_string_to_array "${upper}" pool_upper
+    active_combined+="${upper}"
+  fi
+  if [[ -n ${lower} ]]; then
+    spb_string_to_array "${lower}" pool_lower
+    active_combined+="${lower}"
+  fi
+  if [[ -n ${digit} ]]; then
+    spb_string_to_array "${digit}" pool_digit
+    active_combined+="${digit}"
+  fi
+  if [[ -n ${special} ]]; then
+    spb_string_to_array "${special}" pool_special
+    active_combined+="${special}"
+  fi
+  spb_string_to_array "${active_combined}" pool_combined
+  upper_boundary=${#pool_upper[@]}
+  lower_boundary=$((upper_boundary + ${#pool_lower[@]}))
+  digit_boundary=$((lower_boundary + ${#pool_digit[@]}))
+
+  # Phase 7: draw the exact multiset of characters we will place.
+  draw_upper=()
+  draw_lower=()
+  draw_digit=()
+  draw_special=()
+
+  if (( min_upper > 0 )); then
+    draw_output=$(get_random "${min_upper}" 0 "${#pool_upper[@]}") || return $?
+    while IFS= read -r line; do
+      draw_upper+=("${pool_upper[line]}")
+    done <<< "${draw_output}"
+  fi
+  if (( min_lower > 0 )); then
+    draw_output=$(get_random "${min_lower}" 0 "${#pool_lower[@]}") || return $?
+    while IFS= read -r line; do
+      draw_lower+=("${pool_lower[line]}")
+    done <<< "${draw_output}"
+  fi
+  if (( min_digit > 0 )); then
+    draw_output=$(get_random "${min_digit}" 0 "${#pool_digit[@]}") || return $?
+    while IFS= read -r line; do
+      draw_digit+=("${pool_digit[line]}")
+    done <<< "${draw_output}"
+  fi
+  if (( min_special > 0 )); then
+    draw_output=$(get_random "${min_special}" 0 "${#pool_special[@]}") || return $?
+    while IFS= read -r line; do
+      draw_special+=("${pool_special[line]}")
+    done <<< "${draw_output}"
+  fi
+
+  fill_count=$((length - minimum_sum))
+  if (( fill_count > 0 )); then
+    draw_output=$(get_random "${fill_count}" 0 "${#pool_combined[@]}") || return $?
+    while IFS= read -r line; do
+      draw_index=$((10#${line}))
+      character=${pool_combined[draw_index]}
+      if (( draw_index < upper_boundary )); then
+        draw_upper+=("${character}")
+      elif (( draw_index < lower_boundary )); then
+        draw_lower+=("${character}")
+      elif (( draw_index < digit_boundary )); then
+        draw_digit+=("${character}")
+      else
+        draw_special+=("${character}")
+      fi
+    done <<< "${draw_output}"
+  fi
+
+  # Phase 8: reject class-count mixes that can never satisfy the run limit.
+  remaining_upper=${#draw_upper[@]}
+  remaining_lower=${#draw_lower[@]}
+  remaining_digit=${#draw_digit[@]}
+  remaining_special=${#draw_special[@]}
+  if (( max_consecutive > 0 )); then
+    largest_count=${remaining_upper}
+    (( remaining_lower > largest_count )) && largest_count=${remaining_lower}
+    (( remaining_digit > largest_count )) && largest_count=${remaining_digit}
+    (( remaining_special > largest_count )) && largest_count=${remaining_special}
+    other_total=$((length - largest_count))
+    if (( largest_count > max_consecutive * (other_total + 1) )); then
+      printf 'error: generate_password: consecutive-class constraint unsatisfiable with current class counts\n' >&2
+      return 1
+    fi
+  fi
+
+  # Phase 9: place the pre-drawn characters directly into a valid sequence.
+  result=()
+  prev_class=''
+  run_length=0
+  while (( ${#result[@]} < length )); do
+    remaining_slots=$((length - ${#result[@]}))
+    total_weight=0
+
+    for class_name in upper lower digit special; do
+      case "${class_name}" in
+        upper) cumulative_weight=${remaining_upper} ;;
+        lower) cumulative_weight=${remaining_lower} ;;
+        digit) cumulative_weight=${remaining_digit} ;;
+        special) cumulative_weight=${remaining_special} ;;
+      esac
+
+      if (( cumulative_weight == 0 )); then
         continue
       fi
-    fi
+      if (( max_consecutive > 0 )) && [[ ${class_name} == "${prev_class}" ]] && (( run_length >= max_consecutive )); then
+        continue
+      fi
 
-    for character in "${result[@]}"; do
-      character_class=$(spb_classify_char "${character}") || return 1
-      case "${character_class}" in
-        upper) (( upper_count++ )) ;;
-        lower) (( lower_count++ )) ;;
-        digit) (( digit_count++ )) ;;
-        special) (( special_count++ )) ;;
+      candidate_upper=${remaining_upper}
+      candidate_lower=${remaining_lower}
+      candidate_digit=${remaining_digit}
+      candidate_special=${remaining_special}
+      case "${class_name}" in
+        upper) (( candidate_upper-- )) ;;
+        lower) (( candidate_lower-- )) ;;
+        digit) (( candidate_digit-- )) ;;
+        special) (( candidate_special-- )) ;;
       esac
+
+      largest_count=${candidate_upper}
+      (( candidate_lower > largest_count )) && largest_count=${candidate_lower}
+      (( candidate_digit > largest_count )) && largest_count=${candidate_digit}
+      (( candidate_special > largest_count )) && largest_count=${candidate_special}
+
+      if (( max_consecutive > 0 )); then
+        other_total=$(((remaining_slots - 1) - largest_count))
+        if (( largest_count > max_consecutive * (other_total + 1) )); then
+          continue
+        fi
+      fi
+
+      total_weight=$((total_weight + cumulative_weight))
     done
 
-    if (( upper_count < min_upper || lower_count < min_lower || digit_count < min_digit || special_count < min_special )); then
-      if (( attempt == max_attempts )); then
-        if (( upper_count < min_upper )); then
-          printf 'error: generate_password: minimums not satisfiable with current constraints (upper needs %d, got %d)\n' "${min_upper}" "${upper_count}" >&2
-        elif (( lower_count < min_lower )); then
-          printf 'error: generate_password: minimums not satisfiable with current constraints (lower needs %d, got %d)\n' "${min_lower}" "${lower_count}" >&2
-        elif (( digit_count < min_digit )); then
-          printf 'error: generate_password: minimums not satisfiable with current constraints (digit needs %d, got %d)\n' "${min_digit}" "${digit_count}" >&2
-        else
-          printf 'error: generate_password: minimums not satisfiable with current constraints (special needs %d, got %d)\n' "${min_special}" "${special_count}" >&2
-        fi
-        return 1
-      fi
-      continue
+    if (( total_weight == 0 )); then
+      printf 'error: generate_password: consecutive-class constraint unsatisfiable with current class counts\n' >&2
+      return 1
     fi
 
-    password=$(spb_array_to_string result)
-    printf '%s\n' "${password}" || {
-      printf 'error: generate_password: failed to emit password\n' >&2
-      return 1
-    }
-    return 0
+    spb_generate_password_draw_index "${total_weight}" || return $?
+    draw_index=${selector_draw}
+    cumulative_weight=0
+    selected_class=''
+
+    for class_name in upper lower digit special; do
+      case "${class_name}" in
+        upper) remaining_slots=${remaining_upper} ;;
+        lower) remaining_slots=${remaining_lower} ;;
+        digit) remaining_slots=${remaining_digit} ;;
+        special) remaining_slots=${remaining_special} ;;
+      esac
+
+      if (( remaining_slots == 0 )); then
+        continue
+      fi
+      if (( max_consecutive > 0 )) && [[ ${class_name} == "${prev_class}" ]] && (( run_length >= max_consecutive )); then
+        continue
+      fi
+
+      candidate_upper=${remaining_upper}
+      candidate_lower=${remaining_lower}
+      candidate_digit=${remaining_digit}
+      candidate_special=${remaining_special}
+      case "${class_name}" in
+        upper) (( candidate_upper-- )) ;;
+        lower) (( candidate_lower-- )) ;;
+        digit) (( candidate_digit-- )) ;;
+        special) (( candidate_special-- )) ;;
+      esac
+
+      largest_count=${candidate_upper}
+      (( candidate_lower > largest_count )) && largest_count=${candidate_lower}
+      (( candidate_digit > largest_count )) && largest_count=${candidate_digit}
+      (( candidate_special > largest_count )) && largest_count=${candidate_special}
+
+      if (( max_consecutive > 0 )); then
+        other_total=$(((length - ${#result[@]} - 1) - largest_count))
+        if (( largest_count > max_consecutive * (other_total + 1) )); then
+          continue
+        fi
+      fi
+
+      cumulative_weight=$((cumulative_weight + remaining_slots))
+      if (( draw_index < cumulative_weight )); then
+        selected_class=${class_name}
+        break
+      fi
+    done
+
+    case "${selected_class}" in
+      upper)
+        character=${draw_upper[upper_cursor]}
+        (( upper_cursor++ ))
+        (( remaining_upper-- ))
+        ;;
+      lower)
+        character=${draw_lower[lower_cursor]}
+        (( lower_cursor++ ))
+        (( remaining_lower-- ))
+        ;;
+      digit)
+        character=${draw_digit[digit_cursor]}
+        (( digit_cursor++ ))
+        (( remaining_digit-- ))
+        ;;
+      special)
+        character=${draw_special[special_cursor]}
+        (( special_cursor++ ))
+        (( remaining_special-- ))
+        ;;
+      *)
+        printf 'error: generate_password: failed to choose the next character class\n' >&2
+        return 1
+        ;;
+    esac
+
+    result+=("${character}")
+    if [[ ${selected_class} == "${prev_class}" ]]; then
+      (( run_length++ ))
+    else
+      prev_class=${selected_class}
+      run_length=1
+    fi
   done
+
+  # Success: emit exactly one finished password and nothing else.
+  password=$(spb_array_to_string result)
+  printf '%s\n' "${password}" || {
+    printf 'error: generate_password: failed to emit password\n' >&2
+    return 1
+  }
+  return 0
 )

@@ -8,7 +8,7 @@ characters that would violate the constraint are displaced to the end of the
 array (the "reserve") and may be reconsidered later in a position where they
 no longer cause a violation.
 
-This module is **pure logic** — it has no dependencies on randomness, I/O, or
+This module is **pure logic** - it has no dependencies on randomness, I/O, or
 external tools. It operates entirely on in-memory arrays, making it fully
 deterministic and trivially testable with constructed inputs.
 
@@ -16,12 +16,12 @@ deterministic and trivially testable with constructed inputs.
 
 ## 2. Module Location
 
-```
+```text
 src/
-└── enforce_max_consecutive/
-    ├── enforce_max_consecutive.sh    # function source
-    ├── REQUIREMENTS.md               # this document
-    └── enforce_max_consecutive.bats  # 100% code-path coverage tests
+\-- enforce_max_consecutive/
+    |-- enforce_max_consecutive.sh    # function source
+    |-- REQUIREMENTS.md               # this document
+    \-- ../../test/enforce_max_consecutive_test.sh  # current Bash test file
 ```
 
 ---
@@ -38,8 +38,8 @@ enforce_max_consecutive INPUT_ARRAY_NAME RESULT_ARRAY_NAME TARGET_LENGTH MAX_CON
 |---|---|---|
 | `INPUT_ARRAY_NAME` | string | Name of a Bash indexed array containing candidate characters. Length MUST be >= TARGET_LENGTH. |
 | `RESULT_ARRAY_NAME` | string | Name of a Bash indexed array to receive the output. Will be cleared and populated. |
-| `TARGET_LENGTH` | int | Number of characters to produce. Range: 1–512. |
-| `MAX_CONSECUTIVE` | int | Maximum consecutive characters from the same class. 0 = disabled (no enforcement). Range: 0–512. |
+| `TARGET_LENGTH` | int | Number of characters to produce. Range: 1-512. |
+| `MAX_CONSECUTIVE` | int | Maximum consecutive characters from the same class. 0 = disabled (no enforcement). Range: 0-512. |
 
 ### 3.2 Behavior by MAX_CONSECUTIVE Value
 
@@ -68,91 +68,51 @@ classify_char(char):
 
 ### 4.1 Classification Invariants
 
-- Every printable ASCII character (0x21–0x7E) maps to exactly one class.
-- Classification is deterministic — same input always produces same class.
+- Every printable ASCII character (0x21-0x7E) maps to exactly one class.
+- Classification is deterministic - the same input always produces the same class.
 - The four class ranges are disjoint: `[A-Z]`, `[a-z]`, `[0-9]`, and
   everything else.
 - Classification does NOT depend on any user-configurable character sets.
   This is intentional: the caller (`generate_password`) validates that
   characters in each class belong to the correct ASCII range (see
-  `generate_password` REQUIREMENTS §3.3), so classification here is always
+  `generate_password` requirements section 3.3), so classification here is always
   consistent.
 
 ---
 
 ## 5. Algorithm
 
-```
-┌────────────────────────────────────────────────────┐
-│ 1. VALIDATE                                        │
-│    - Verify all 4 arguments are provided           │
-│    - Verify INPUT_ARRAY_NAME is a set variable     │
-│    - Verify RESULT_ARRAY_NAME is a set variable    │
-│    - Verify TARGET_LENGTH is valid integer          │
-│    - Verify MAX_CONSECUTIVE is valid integer        │
-│    - Verify input array length >= TARGET_LENGTH    │
-└─────────────────────┬──────────────────────────────┘
-                      │
-                      ▼
-┌────────────────────────────────────────────────────┐
-│ 2. SHORT-CIRCUIT CHECK                             │
-│    If MAX_CONSECUTIVE == 0:                        │
-│      Copy first TARGET_LENGTH elements to result   │
-│      Return 0                                      │
-└─────────────────────┬──────────────────────────────┘
-                      │ (max_consecutive > 0)
-                      ▼
-┌────────────────────────────────────────────────────┐
-│ 3. MOVE-TO-END PASS                                │
-│    (see §5.1 for full specification)               │
-│                                                    │
-│    read_cursor  = 0                                │
-│    write_cursor = 0                                │
-│    end_cursor   = len(input)                       │
-│    run_length   = 0                                │
-│    prev_class   = ""                               │
-│                                                    │
-│    While write_cursor < TARGET_LENGTH AND          │
-│          read_cursor < end_cursor:                 │
-│                                                    │
-│      char = input[read_cursor++]                   │
-│      cur_class = classify_char(char)               │
-│                                                    │
-│      IF write_cursor > 0 AND                       │
-│         cur_class == prev_class AND                │
-│         run_length >= MAX_CONSECUTIVE:             │
-│           input[end_cursor++] = char  (displace)   │
-│           CONTINUE                                 │
-│                                                    │
-│      result[write_cursor++] = char                 │
-│      IF cur_class == prev_class:                   │
-│        run_length++                                │
-│      ELSE:                                         │
-│        run_length = 1                              │
-│        prev_class = cur_class                      │
-└─────────────────────┬──────────────────────────────┘
-                      │
-                      ▼
-┌────────────────────────────────────────────────────┐
-│ 4. COMPLETION CHECK                                │
-│    If write_cursor < TARGET_LENGTH:                │
-│      → Reserve exhausted. Return exit 1.           │
-│    Else:                                           │
-│      → Return exit 0. Result array populated.      │
-└────────────────────────────────────────────────────┘
-```
+1. Validate the arguments.
+   - Require all four arguments.
+   - Require that both array names refer to set indexed arrays.
+   - Require integer `TARGET_LENGTH` and `MAX_CONSECUTIVE`.
+   - Require the input array length to be at least `TARGET_LENGTH`.
+2. Short-circuit the disabled mode.
+   - If `MAX_CONSECUTIVE == 0`, copy the first `TARGET_LENGTH` items to the
+     result array and return success.
+3. Run the move-to-end pass.
+   - Track `read_cursor`, `write_cursor`, `end_cursor`, `run_length`, and
+     `prev_class`.
+   - Read each candidate character in order.
+   - If placing that character would exceed the class run limit, append it to
+     the logical end of the candidate array instead of dropping it.
+   - Otherwise write it to the result and update the current run state.
+4. Finish with an explicit completion check.
+   - If `write_cursor < TARGET_LENGTH`, the reserve is exhausted and the
+     function returns exit code `1`.
+   - Otherwise the result array is complete and the function returns `0`.
 
 ### 5.1 Move-to-End Pass Detail
 
 **Input:** An array of `N` characters (where `N >= TARGET_LENGTH`), typically
-`2 × TARGET_LENGTH` as provided by `generate_password`.
+`2 x TARGET_LENGTH` as provided by `generate_password`.
 
 **Two-cursor scan:**
 
 ```
-read_cursor  → advances through all candidates (original + displaced)
-write_cursor → advances through the result array (only on accepted chars)
-end_cursor   → logical end of the candidate array (grows as chars are displaced)
+read_cursor  -> advances through all candidates (original + displaced)
+write_cursor -> advances through the result array (only on accepted chars)
+end_cursor   -> logical end of the candidate array (grows as chars are displaced)
 ```
 
 **Displacement mechanics:**
@@ -176,7 +136,7 @@ end_cursor   → logical end of the candidate array (grows as chars are displace
 
 | Metric | Bound |
 |---|---|
-| Time | O(N + D) where N = input length, D = number of displacements. D ≤ N, so worst case O(2N). |
+| Time | O(N + D) where N = input length, D = number of displacements. D <= N, so worst case O(2N). |
 | Space | O(TARGET_LENGTH) for the result array. Input array is extended in-place. |
 | Iterations | At most N + D. Each character is read at most twice (once in original position, once if displaced). |
 
@@ -186,7 +146,7 @@ The move-to-end approach is superior to "shuffle then check, retry on failure":
 
 | Property | Move-to-end | Shuffle-retry |
 |---|---|---|
-| Time complexity | O(n) deterministic | O(n) per attempt × unbounded attempts |
+| Time complexity | O(n) deterministic | O(n) per attempt x unbounded attempts |
 | Worst case | Linear scan, definitive pass/fail | May never terminate without a retry cap |
 | Bias | Slight position bias for displaced chars | Unbiased over valid permutations |
 | Testability | Fully deterministic given input array | Depends on random shuffle output |
@@ -224,7 +184,7 @@ The enforcement pass is a **filter**, not a generator.
 
 | Dependency | Required | Resolution |
 |---|---|---|
-| Bash ≥ 4.3 | Yes | Required for `local -n` (nameref). |
+| Bash >= 4.3 | Yes | Required for `local -n` (nameref). |
 
 **No external dependencies.** This module does not use `get_random`, `od`,
 `/dev/urandom`, or any other module. It is pure logic operating on arrays.
@@ -237,63 +197,63 @@ The enforcement pass is a **filter**, not a generator.
 
 | ID | Test |
 |---|---|
-| HP-01 | No violations in input — result matches first TARGET_LENGTH chars of input. |
-| HP-02 | `max_consecutive=2`, input `[A,B,a,b,1,2,!,@]` — accepted as-is. |
-| HP-03 | `max_consecutive=1`, well-interleaved input — accepted as-is. |
+| HP-01 | No violations in input - result matches first TARGET_LENGTH chars of input. |
+| HP-02 | `max_consecutive=2`, input `[A,B,a,b,1,2,!,@]` - accepted as-is. |
+| HP-03 | `max_consecutive=1`, well-interleaved input - accepted as-is. |
 | HP-04 | Result length equals TARGET_LENGTH exactly. |
 
 ### 9.2 Displacement Tests
 
 | ID | Test |
 |---|---|
-| DT-01 | Single displacement: `[A,A,b,c]`, target=3, max=1 → second `A` displaced, `b` takes its place. |
-| DT-02 | Multiple displacements: `[A,A,A,b,c,d]`, target=3, max=1 → result interleaves `A` with others. |
-| DT-03 | Displaced char reused later: `[A,A,B,C,x,y,z,z]`, target=6, max=1 → displaced `A` fits after `B` or `C`. |
-| DT-04 | Chain displacement: `[A,B,B,B,C,C,C,x]`, target=6, max=1 → multiple classes displaced and recycled. |
-| DT-05 | All chars from same class with reserve from different class: `[A,A,A,b,b,b]`, target=4, max=1 → alternates. |
+| DT-01 | Single displacement: `[A,A,b,c]`, target=3, max=1 -> second `A` displaced, `b` takes its place. |
+| DT-02 | Multiple displacements: `[A,A,A,b,c,d]`, target=3, max=1 -> result interleaves `A` with others. |
+| DT-03 | Displaced char reused later: `[A,A,B,C,x,y,z,z]`, target=6, max=1 -> displaced `A` fits after `B` or `C`. |
+| DT-04 | Chain displacement: `[A,B,B,B,C,C,C,x]`, target=6, max=1 -> multiple classes displaced and recycled. |
+| DT-05 | All chars from same class with reserve from different class: `[A,A,A,b,b,b]`, target=4, max=1 -> alternates. |
 
 ### 9.3 Disabled (max_consecutive = 0)
 
 | ID | Test |
 |---|---|
 | DC-01 | `max_consecutive=0` copies first TARGET_LENGTH elements unchanged. |
-| DC-02 | `max_consecutive=0` with long same-class runs in input — no enforcement applied. |
+| DC-02 | `max_consecutive=0` with long same-class runs in input - no enforcement applied. |
 
 ### 9.4 Reserve Exhaustion (exit 1)
 
 | ID | Test |
 |---|---|
-| RE-01 | `[A,A,A,A]`, target=3, max=1 → exhausted (only one class available). |
-| RE-02 | `[A,A,A,A,A,A,b]`, target=4, max=1 → exhausted (not enough `b` to interleave). |
-| RE-03 | `[A,A,B,B]`, target=4, max=1 → exactly satisfiable (alternating ABAB). Verify success. |
-| RE-04 | `[A,A,A,B]`, target=4, max=1 → exhausted (can't place 3 A's with only 1 B to break). |
+| RE-01 | `[A,A,A,A]`, target=3, max=1 -> exhausted (only one class available). |
+| RE-02 | `[A,A,A,A,A,A,b]`, target=4, max=1 -> exhausted (not enough `b` to interleave). |
+| RE-03 | `[A,A,B,B]`, target=4, max=1 -> exactly satisfiable (alternating ABAB). Verify success. |
+| RE-04 | `[A,A,A,B]`, target=4, max=1 -> exhausted (cannot place 3 A's with only 1 B to break). |
 
 ### 9.5 Validation Errors (exit 2)
 
 | ID | Test |
 |---|---|
-| VE-01 | Missing arguments → exit 2. |
-| VE-02 | TARGET_LENGTH not an integer → exit 2. |
-| VE-03 | MAX_CONSECUTIVE not an integer → exit 2. |
-| VE-04 | Input array shorter than TARGET_LENGTH → exit 2. |
-| VE-05 | Unset INPUT_ARRAY_NAME → exit 2. |
-| VE-06 | Unset RESULT_ARRAY_NAME → exit 2. |
-| VE-07 | TARGET_LENGTH = 0 → exit 2. |
-| VE-08 | TARGET_LENGTH negative → exit 2. |
-| VE-09 | MAX_CONSECUTIVE negative → exit 2. |
+| VE-01 | Missing arguments -> exit 2. |
+| VE-02 | TARGET_LENGTH not an integer -> exit 2. |
+| VE-03 | MAX_CONSECUTIVE not an integer -> exit 2. |
+| VE-04 | Input array shorter than TARGET_LENGTH -> exit 2. |
+| VE-05 | Unset INPUT_ARRAY_NAME -> exit 2. |
+| VE-06 | Unset RESULT_ARRAY_NAME -> exit 2. |
+| VE-07 | TARGET_LENGTH = 0 -> exit 2. |
+| VE-08 | TARGET_LENGTH negative -> exit 2. |
+| VE-09 | MAX_CONSECUTIVE negative -> exit 2. |
 
 ### 9.6 Edge Cases
 
 | ID | Test |
 |---|---|
-| EC-01 | TARGET_LENGTH = 1 — single char, no consecutive check possible. Always succeeds. |
-| EC-02 | MAX_CONSECUTIVE = 1, single class in input, target=1 — succeeds (run of 1 is ok). |
-| EC-03 | MAX_CONSECUTIVE >= TARGET_LENGTH — constraint can never be violated; equivalent to disabled. |
-| EC-04 | Input exactly equals TARGET_LENGTH (no reserve at all). Any violation → immediate exhaustion. |
-| EC-05 | Input length = 2 × TARGET_LENGTH — standard case from `generate_password`. |
-| EC-06 | All elements are the same character, max=TARGET_LENGTH — succeeds (run equals max). |
-| EC-07 | All elements are the same character, max=TARGET_LENGTH-1 — fails (run would be TARGET_LENGTH). |
-| EC-08 | Special characters (`!@#$%`) — classified as "special", displacement works correctly. |
+| EC-01 | TARGET_LENGTH = 1 - single char, no consecutive check possible. Always succeeds. |
+| EC-02 | MAX_CONSECUTIVE = 1, single class in input, target=1 - succeeds (run of 1 is ok). |
+| EC-03 | MAX_CONSECUTIVE >= TARGET_LENGTH - the constraint can never be violated; equivalent to disabled. |
+| EC-04 | Input exactly equals TARGET_LENGTH (no reserve at all). Any violation -> immediate exhaustion. |
+| EC-05 | Input length = 2 x TARGET_LENGTH - standard case from `generate_password`. |
+| EC-06 | All elements are the same character, max=TARGET_LENGTH - succeeds (run equals max). |
+| EC-07 | All elements are the same character, max=TARGET_LENGTH-1 - fails (run would be TARGET_LENGTH). |
+| EC-08 | Special characters (`!@#$%`) - classified as "special", displacement works correctly. |
 | EC-09 | Mixed case: displacement of chars from all 4 classes in one pass. |
 
 ### 9.7 Classification Tests
@@ -304,21 +264,21 @@ The enforcement pass is a **filter**, not a generator.
 | CL-02 | Each of `a`, `z` classified as "lower". |
 | CL-03 | Each of `0`, `9` classified as "digit". |
 | CL-04 | Each of `!`, `~`, `@`, `#` classified as "special". |
-| CL-05 | Boundary: `@` (64, just below A) → "special". |
-| CL-06 | Boundary: `[` (91, just above Z) → "special". |
-| CL-07 | Boundary: `` ` `` (96, just below a) → "special". |
-| CL-08 | Boundary: `{` (123, just above z) → "special". |
-| CL-09 | Boundary: `/` (47, just below 0) → "special". |
-| CL-10 | Boundary: `:` (58, just above 9) → "special". |
+| CL-05 | Boundary: `@` (64, just below A) -> "special". |
+| CL-06 | Boundary: `[` (91, just above Z) -> "special". |
+| CL-07 | Boundary: `` ` `` (96, just below a) -> "special". |
+| CL-08 | Boundary: `{` (123, just above z) -> "special". |
+| CL-09 | Boundary: `/` (47, just below 0) -> "special". |
+| CL-10 | Boundary: `:` (58, just above 9) -> "special". |
 
 ---
 
 ## 10. Non-Requirements
 
-- **Randomness** — this module is deterministic. Randomness is the caller's
+- **Randomness** - this module is deterministic. Randomness is the caller's
   responsibility (via Fisher-Yates shuffle before calling this function).
-- **Character set awareness** — classification uses fixed ASCII ranges, not
+- **Character set awareness** - classification uses fixed ASCII ranges, not
   user-customized character sets.
-- **Minimum enforcement** — this module does NOT verify class minimums. That
+- **Minimum enforcement** - this module does NOT verify class minimums. That
   is the caller's responsibility after enforcement.
-- **Stdout output** — result is via nameref array, not stdout.
+- **Stdout output** - result is via nameref array, not stdout.
