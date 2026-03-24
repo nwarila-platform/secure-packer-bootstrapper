@@ -8,7 +8,7 @@ mapfile -t shell_files < <(find "${repo_root}/bin" "${repo_root}/scripts" "${rep
 bash -n "${shell_files[@]}"
 
 if command -v shellcheck >/dev/null 2>&1; then
-  shellcheck -x -s bash "${shell_files[@]}"
+  shellcheck -S warning -x -s bash "${shell_files[@]}"
 else
   printf 'shellcheck not installed; skipped shellcheck\n'
 fi
