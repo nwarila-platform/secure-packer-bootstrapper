@@ -26,38 +26,27 @@ generate_password() (
   local option
   local invalid_chars
   local duplicate_chars
-  local active_combined=''
   local password
-  local draw_output
-  local draw_index
-  local line
   local class_name
   local character
-  local prev_class=''
-  local selected_class
   local od_bin
   local urandom_path=${GET_RANDOM_URANDOM_PATH:-/dev/urandom}
   local byte_dump byte
   local -i length min_upper min_lower min_digit min_special max_consecutive minimum_sum
-  local -i fill_count remaining_slots total_weight cumulative_weight
-  local -i remaining_upper remaining_lower remaining_digit remaining_special
-  local -i candidate_upper candidate_lower candidate_digit candidate_special
-  local -i largest_count other_total
-  local -i run_length=0
+  local -i remaining_slots next_prev_class next_run_length
+  local -i candidate_class_id
   local -i buffered_bytes=0 buffer_index=0 selector_draw scanned
-  local -i upper_boundary lower_boundary digit_boundary
-  local -i upper_cursor=0 lower_cursor=0 digit_cursor=0 special_cursor=0
+  local -i current_prev_class=0 current_run_length=0
+  local -i next_need_upper next_need_lower next_need_digit next_need_special
+  local can_complete_result
   local -a pool_upper=()
   local -a pool_lower=()
   local -a pool_digit=()
   local -a pool_special=()
-  local -a pool_combined=()
+  local -a combined_pool=()
+  local -a combined_class_ids=()
   local -a random_bytes=()
-  local -a draw_upper=()
-  local -a draw_lower=()
-  local -a draw_digit=()
-  local -a draw_special=()
-  local -a result=()
+  local -A feasibility_cache=()
   local IFS=$' \t\n'
 
   special=$(spb_default_special_chars)
@@ -313,6 +302,178 @@ generate_password() (
     return 1
   fi
 
+  spb_generate_password_can_complete() {
+    local target_key
+    local state_key
+    local child_key
+    local found_completion
+    local -a stack_slots=()
+    local -a stack_need_upper=()
+    local -a stack_need_lower=()
+    local -a stack_need_digit=()
+    local -a stack_need_special=()
+    local -a stack_prev_class=()
+    local -a stack_prev_run=()
+    local -a stack_stage=()
+    local -i stack_size=0 stack_index
+    local -i slots need_upper need_lower need_digit need_special prev_class_id prev_run_length
+    local -i class_id pool_size next_run
+    local -i child_need_upper child_need_lower child_need_digit child_need_special
+
+    target_key="${1}|${2}|${3}|${4}|${5}|${6}|${7}"
+    if [[ -v feasibility_cache["${target_key}"] ]]; then
+      can_complete_result=${feasibility_cache["${target_key}"]}
+      return 0
+    fi
+
+    stack_slots[0]=${1}
+    stack_need_upper[0]=${2}
+    stack_need_lower[0]=${3}
+    stack_need_digit[0]=${4}
+    stack_need_special[0]=${5}
+    stack_prev_class[0]=${6}
+    stack_prev_run[0]=${7}
+    stack_stage[0]=0
+    stack_size=1
+
+    while (( stack_size > 0 )); do
+      stack_index=$((stack_size - 1))
+      slots=${stack_slots[stack_index]}
+      need_upper=${stack_need_upper[stack_index]}
+      need_lower=${stack_need_lower[stack_index]}
+      need_digit=${stack_need_digit[stack_index]}
+      need_special=${stack_need_special[stack_index]}
+      prev_class_id=${stack_prev_class[stack_index]}
+      prev_run_length=${stack_prev_run[stack_index]}
+      state_key="${slots}|${need_upper}|${need_lower}|${need_digit}|${need_special}|${prev_class_id}|${prev_run_length}"
+
+      if [[ -v feasibility_cache["${state_key}"] ]]; then
+        (( stack_size-- ))
+        continue
+      fi
+
+      if (( stack_stage[stack_index] == 0 )); then
+        if (( need_upper + need_lower + need_digit + need_special > slots )); then
+          feasibility_cache["${state_key}"]=0
+          (( stack_size-- ))
+          continue
+        fi
+
+        if (( slots > 0 && max_consecutive == 0 )); then
+          feasibility_cache["${state_key}"]=0
+          (( stack_size-- ))
+          continue
+        fi
+
+        if (( slots == 0 )); then
+          if (( need_upper == 0 && need_lower == 0 && need_digit == 0 && need_special == 0 )); then
+            feasibility_cache["${state_key}"]=1
+          else
+            feasibility_cache["${state_key}"]=0
+          fi
+          (( stack_size-- ))
+          continue
+        fi
+
+        stack_stage[stack_index]=1
+        for class_id in 1 2 3 4; do
+          case "${class_id}" in
+            1) pool_size=${#pool_upper[@]} ;;
+            2) pool_size=${#pool_lower[@]} ;;
+            3) pool_size=${#pool_digit[@]} ;;
+            4) pool_size=${#pool_special[@]} ;;
+          esac
+
+          if (( pool_size == 0 )); then
+            continue
+          fi
+          if (( class_id == prev_class_id && prev_run_length >= max_consecutive )); then
+            continue
+          fi
+
+          child_need_upper=${need_upper}
+          child_need_lower=${need_lower}
+          child_need_digit=${need_digit}
+          child_need_special=${need_special}
+          case "${class_id}" in
+            1) (( child_need_upper > 0 )) && (( child_need_upper-- )) ;;
+            2) (( child_need_lower > 0 )) && (( child_need_lower-- )) ;;
+            3) (( child_need_digit > 0 )) && (( child_need_digit-- )) ;;
+            4) (( child_need_special > 0 )) && (( child_need_special-- )) ;;
+          esac
+
+          if (( class_id == prev_class_id )); then
+            next_run=$((prev_run_length + 1))
+          else
+            next_run=1
+          fi
+
+          child_key="$((slots - 1))|${child_need_upper}|${child_need_lower}|${child_need_digit}|${child_need_special}|${class_id}|${next_run}"
+          if [[ -v feasibility_cache["${child_key}"] ]]; then
+            continue
+          fi
+
+          stack_slots[stack_size]=$((slots - 1))
+          stack_need_upper[stack_size]=${child_need_upper}
+          stack_need_lower[stack_size]=${child_need_lower}
+          stack_need_digit[stack_size]=${child_need_digit}
+          stack_need_special[stack_size]=${child_need_special}
+          stack_prev_class[stack_size]=${class_id}
+          stack_prev_run[stack_size]=${next_run}
+          stack_stage[stack_size]=0
+          (( stack_size++ ))
+        done
+        continue
+      fi
+
+      found_completion=0
+      for class_id in 1 2 3 4; do
+        case "${class_id}" in
+          1) pool_size=${#pool_upper[@]} ;;
+          2) pool_size=${#pool_lower[@]} ;;
+          3) pool_size=${#pool_digit[@]} ;;
+          4) pool_size=${#pool_special[@]} ;;
+        esac
+
+        if (( pool_size == 0 )); then
+          continue
+        fi
+        if (( class_id == prev_class_id && prev_run_length >= max_consecutive )); then
+          continue
+        fi
+
+        child_need_upper=${need_upper}
+        child_need_lower=${need_lower}
+        child_need_digit=${need_digit}
+        child_need_special=${need_special}
+        case "${class_id}" in
+          1) (( child_need_upper > 0 )) && (( child_need_upper-- )) ;;
+          2) (( child_need_lower > 0 )) && (( child_need_lower-- )) ;;
+          3) (( child_need_digit > 0 )) && (( child_need_digit-- )) ;;
+          4) (( child_need_special > 0 )) && (( child_need_special-- )) ;;
+        esac
+
+        if (( class_id == prev_class_id )); then
+          next_run=$((prev_run_length + 1))
+        else
+          next_run=1
+        fi
+
+        child_key="$((slots - 1))|${child_need_upper}|${child_need_lower}|${child_need_digit}|${child_need_special}|${class_id}|${next_run}"
+        if [[ ${feasibility_cache["${child_key}"]} == 1 ]]; then
+          found_completion=1
+          break
+        fi
+      done
+
+      feasibility_cache["${state_key}"]=${found_completion}
+      (( stack_size-- ))
+    done
+
+    can_complete_result=${feasibility_cache["${target_key}"]}
+    return 0
+  }
+
   # Draw one uniformly random index from [0, SPAN) using a buffered entropy
   # stream so the class-placement loop does not spawn `od` on every step.
   spb_generate_password_draw_index() {
@@ -358,233 +519,121 @@ generate_password() (
   # Phase 6: build the reusable class pools once.
   if [[ -n ${upper} ]]; then
     spb_string_to_array "${upper}" pool_upper
-    active_combined+="${upper}"
+    for character in "${pool_upper[@]}"; do
+      combined_pool[${#combined_pool[@]}]=${character}
+      combined_class_ids[${#combined_class_ids[@]}]=1
+    done
   fi
   if [[ -n ${lower} ]]; then
     spb_string_to_array "${lower}" pool_lower
-    active_combined+="${lower}"
+    for character in "${pool_lower[@]}"; do
+      combined_pool[${#combined_pool[@]}]=${character}
+      combined_class_ids[${#combined_class_ids[@]}]=2
+    done
   fi
   if [[ -n ${digit} ]]; then
     spb_string_to_array "${digit}" pool_digit
-    active_combined+="${digit}"
+    for character in "${pool_digit[@]}"; do
+      combined_pool[${#combined_pool[@]}]=${character}
+      combined_class_ids[${#combined_class_ids[@]}]=3
+    done
   fi
   if [[ -n ${special} ]]; then
     spb_string_to_array "${special}" pool_special
-    active_combined+="${special}"
-  fi
-  spb_string_to_array "${active_combined}" pool_combined
-  upper_boundary=${#pool_upper[@]}
-  lower_boundary=$((upper_boundary + ${#pool_lower[@]}))
-  digit_boundary=$((lower_boundary + ${#pool_digit[@]}))
-
-  # Phase 7: draw the exact multiset of characters we will place.
-  draw_upper=()
-  draw_lower=()
-  draw_digit=()
-  draw_special=()
-
-  if (( min_upper > 0 )); then
-    draw_output=$(get_random "${min_upper}" 0 "${#pool_upper[@]}") || return $?
-    while IFS= read -r line; do
-      draw_upper+=("${pool_upper[line]}")
-    done <<< "${draw_output}"
-  fi
-  if (( min_lower > 0 )); then
-    draw_output=$(get_random "${min_lower}" 0 "${#pool_lower[@]}") || return $?
-    while IFS= read -r line; do
-      draw_lower+=("${pool_lower[line]}")
-    done <<< "${draw_output}"
-  fi
-  if (( min_digit > 0 )); then
-    draw_output=$(get_random "${min_digit}" 0 "${#pool_digit[@]}") || return $?
-    while IFS= read -r line; do
-      draw_digit+=("${pool_digit[line]}")
-    done <<< "${draw_output}"
-  fi
-  if (( min_special > 0 )); then
-    draw_output=$(get_random "${min_special}" 0 "${#pool_special[@]}") || return $?
-    while IFS= read -r line; do
-      draw_special+=("${pool_special[line]}")
-    done <<< "${draw_output}"
-  fi
-
-  fill_count=$((length - minimum_sum))
-  if (( fill_count > 0 )); then
-    draw_output=$(get_random "${fill_count}" 0 "${#pool_combined[@]}") || return $?
-    while IFS= read -r line; do
-      draw_index=$((10#${line}))
-      character=${pool_combined[draw_index]}
-      if (( draw_index < upper_boundary )); then
-        draw_upper+=("${character}")
-      elif (( draw_index < lower_boundary )); then
-        draw_lower+=("${character}")
-      elif (( draw_index < digit_boundary )); then
-        draw_digit+=("${character}")
-      else
-        draw_special+=("${character}")
-      fi
-    done <<< "${draw_output}"
-  fi
-
-  # Phase 8: reject class-count mixes that can never satisfy the run limit.
-  remaining_upper=${#draw_upper[@]}
-  remaining_lower=${#draw_lower[@]}
-  remaining_digit=${#draw_digit[@]}
-  remaining_special=${#draw_special[@]}
-  if (( max_consecutive > 0 )); then
-    largest_count=${remaining_upper}
-    (( remaining_lower > largest_count )) && largest_count=${remaining_lower}
-    (( remaining_digit > largest_count )) && largest_count=${remaining_digit}
-    (( remaining_special > largest_count )) && largest_count=${remaining_special}
-    other_total=$((length - largest_count))
-    if (( largest_count > max_consecutive * (other_total + 1) )); then
-      printf 'error: generate_password: consecutive-class constraint unsatisfiable with current class counts\n' >&2
-      return 1
-    fi
-  fi
-
-  # Phase 9: place the pre-drawn characters directly into a valid sequence.
-  result=()
-  prev_class=''
-  run_length=0
-  while (( ${#result[@]} < length )); do
-    remaining_slots=$((length - ${#result[@]}))
-    total_weight=0
-
-    for class_name in upper lower digit special; do
-      case "${class_name}" in
-        upper) cumulative_weight=${remaining_upper} ;;
-        lower) cumulative_weight=${remaining_lower} ;;
-        digit) cumulative_weight=${remaining_digit} ;;
-        special) cumulative_weight=${remaining_special} ;;
-      esac
-
-      if (( cumulative_weight == 0 )); then
-        continue
-      fi
-      if (( max_consecutive > 0 )) && [[ ${class_name} == "${prev_class}" ]] && (( run_length >= max_consecutive )); then
-        continue
-      fi
-
-      candidate_upper=${remaining_upper}
-      candidate_lower=${remaining_lower}
-      candidate_digit=${remaining_digit}
-      candidate_special=${remaining_special}
-      case "${class_name}" in
-        upper) (( candidate_upper-- )) ;;
-        lower) (( candidate_lower-- )) ;;
-        digit) (( candidate_digit-- )) ;;
-        special) (( candidate_special-- )) ;;
-      esac
-
-      largest_count=${candidate_upper}
-      (( candidate_lower > largest_count )) && largest_count=${candidate_lower}
-      (( candidate_digit > largest_count )) && largest_count=${candidate_digit}
-      (( candidate_special > largest_count )) && largest_count=${candidate_special}
-
-      if (( max_consecutive > 0 )); then
-        other_total=$(((remaining_slots - 1) - largest_count))
-        if (( largest_count > max_consecutive * (other_total + 1) )); then
-          continue
-        fi
-      fi
-
-      total_weight=$((total_weight + cumulative_weight))
+    for character in "${pool_special[@]}"; do
+      combined_pool[${#combined_pool[@]}]=${character}
+      combined_class_ids[${#combined_class_ids[@]}]=4
     done
+  fi
 
-    if (( total_weight == 0 )); then
-      printf 'error: generate_password: consecutive-class constraint unsatisfiable with current class counts\n' >&2
-      return 1
-    fi
+  if (( ${#combined_pool[@]} == 0 )); then
+    printf 'error: generate_password: at least one character class must remain non-empty\n' >&2
+    return 2
+  fi
 
-    spb_generate_password_draw_index "${total_weight}" || return $?
-    draw_index=${selector_draw}
-    cumulative_weight=0
-    selected_class=''
+  spb_generate_password_can_complete \
+    "${length}" \
+    "${min_upper}" \
+    "${min_lower}" \
+    "${min_digit}" \
+    "${min_special}" \
+    0 \
+    0 || return 1
+  if [[ ${can_complete_result} != 1 ]]; then
+    printf 'error: generate_password: consecutive-class constraint unsatisfiable with current class counts\n' >&2
+    return 1
+  fi
 
-    for class_name in upper lower digit special; do
-      case "${class_name}" in
-        upper) remaining_slots=${remaining_upper} ;;
-        lower) remaining_slots=${remaining_lower} ;;
-        digit) remaining_slots=${remaining_digit} ;;
-        special) remaining_slots=${remaining_special} ;;
-      esac
+  # Phase 7-9: draw candidate passwords uniformly from the active character
+  # set and restart early whenever a prefix can no longer reach a valid
+  # completion. This keeps the accepted output uniform over the valid password
+  # space without relying on heuristic placement.
+  while :; do
+    password=''
+    remaining_slots=${length}
+    current_prev_class=0
+    current_run_length=0
+    next_need_upper=${min_upper}
+    next_need_lower=${min_lower}
+    next_need_digit=${min_digit}
+    next_need_special=${min_special}
 
-      if (( remaining_slots == 0 )); then
-        continue
+    while (( remaining_slots > 0 )); do
+      spb_generate_password_draw_index "${#combined_pool[@]}" || return $?
+      character=${combined_pool[selector_draw]}
+      candidate_class_id=${combined_class_ids[selector_draw]}
+
+      if (( candidate_class_id == current_prev_class )); then
+        next_run_length=$((current_run_length + 1))
+      else
+        next_run_length=1
       fi
-      if (( max_consecutive > 0 )) && [[ ${class_name} == "${prev_class}" ]] && (( run_length >= max_consecutive )); then
-        continue
-      fi
-
-      candidate_upper=${remaining_upper}
-      candidate_lower=${remaining_lower}
-      candidate_digit=${remaining_digit}
-      candidate_special=${remaining_special}
-      case "${class_name}" in
-        upper) (( candidate_upper-- )) ;;
-        lower) (( candidate_lower-- )) ;;
-        digit) (( candidate_digit-- )) ;;
-        special) (( candidate_special-- )) ;;
-      esac
-
-      largest_count=${candidate_upper}
-      (( candidate_lower > largest_count )) && largest_count=${candidate_lower}
-      (( candidate_digit > largest_count )) && largest_count=${candidate_digit}
-      (( candidate_special > largest_count )) && largest_count=${candidate_special}
-
-      if (( max_consecutive > 0 )); then
-        other_total=$(((length - ${#result[@]} - 1) - largest_count))
-        if (( largest_count > max_consecutive * (other_total + 1) )); then
-          continue
-        fi
-      fi
-
-      cumulative_weight=$((cumulative_weight + remaining_slots))
-      if (( draw_index < cumulative_weight )); then
-        selected_class=${class_name}
+      if (( candidate_class_id == current_prev_class && current_run_length >= max_consecutive )); then
         break
       fi
+
+      case "${candidate_class_id}" in
+        1)
+          next_prev_class=1
+          (( next_need_upper > 0 )) && (( next_need_upper-- ))
+          ;;
+        2)
+          next_prev_class=2
+          (( next_need_lower > 0 )) && (( next_need_lower-- ))
+          ;;
+        3)
+          next_prev_class=3
+          (( next_need_digit > 0 )) && (( next_need_digit-- ))
+          ;;
+        4)
+          next_prev_class=4
+          (( next_need_special > 0 )) && (( next_need_special-- ))
+          ;;
+      esac
+
+      spb_generate_password_can_complete \
+        "$((remaining_slots - 1))" \
+        "${next_need_upper}" \
+        "${next_need_lower}" \
+        "${next_need_digit}" \
+        "${next_need_special}" \
+        "${next_prev_class}" \
+        "${next_run_length}" || return 1
+      if [[ ${can_complete_result} != 1 ]]; then
+        break
+      fi
+
+      password+="${character}"
+      current_prev_class=${next_prev_class}
+      current_run_length=${next_run_length}
+      (( remaining_slots-- ))
     done
 
-    case "${selected_class}" in
-      upper)
-        character=${draw_upper[upper_cursor]}
-        (( upper_cursor++ ))
-        (( remaining_upper-- ))
-        ;;
-      lower)
-        character=${draw_lower[lower_cursor]}
-        (( lower_cursor++ ))
-        (( remaining_lower-- ))
-        ;;
-      digit)
-        character=${draw_digit[digit_cursor]}
-        (( digit_cursor++ ))
-        (( remaining_digit-- ))
-        ;;
-      special)
-        character=${draw_special[special_cursor]}
-        (( special_cursor++ ))
-        (( remaining_special-- ))
-        ;;
-      *)
-        printf 'error: generate_password: failed to choose the next character class\n' >&2
-        return 1
-        ;;
-    esac
-
-    result+=("${character}")
-    if [[ ${selected_class} == "${prev_class}" ]]; then
-      (( run_length++ ))
-    else
-      prev_class=${selected_class}
-      run_length=1
+    if (( remaining_slots == 0 )); then
+      break
     fi
   done
 
-  # Success: emit exactly one finished password and nothing else.
-  password=$(spb_array_to_string result)
   printf '%s\n' "${password}" || {
     printf 'error: generate_password: failed to emit password\n' >&2
     return 1

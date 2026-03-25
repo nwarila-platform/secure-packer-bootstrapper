@@ -9,12 +9,13 @@ bootstrap contract for this repo:
 - generate a SHA-512 crypt password hash with `rounds=10000`
 - generate a passphrase-protected SSH keypair
 - keep only the SSH private/public key files on disk
-- emit only the three secret values and the two key-file paths needed by the
-  current shell step
+- emit the three secret values, the two key-file paths needed by the current
+  shell step, and the shared `PKR_VAR_*` install inputs Packer can consume
+  directly
 
-It intentionally does not own downstream Packer, Kickstart, or Ansible wiring.
-The calling shell must map the emitted values into its own `PKR_VAR_*` or
-tool-specific contracts.
+It intentionally does not own downstream Kickstart or Ansible wiring. It does
+own the shared `PKR_VAR_*` exports this repo can know in advance, while the
+calling shell still owns repo-specific variables or tool-specific contracts.
 
 ## Function Signature
 
@@ -41,11 +42,16 @@ On disk:
 
 On stdout:
 
+- `[[ ${GITHUB_ACTIONS:-} == 'true' ]] && printf '%s\n' '::add-mask::...'`
+  for the generated plaintext password, password hash, and SSH key passphrase
 - `export SPB_DEPLOY_USER_PASSWORD=...`
 - `export SPB_DEPLOY_USER_PASSWORD_HASH=...`
 - `export SPB_SSH_KEY_PASSPHRASE=...`
 - `export SPB_SSH_PRIVATE_KEY_FILE=...`
 - `export SPB_SSH_PUBLIC_KEY_FILE=...`
+- `export PKR_VAR_deploy_user_password=...`
+- `export PKR_VAR_deploy_user_password_hash=...`
+- `export PKR_VAR_deploy_user_key=...`
 
 The intended caller pattern is:
 
@@ -72,7 +78,8 @@ public contract:
 ## Behavioral Rules
 
 - `bootstrap_credentials` MUST remain the only module that knows about
-  downstream-facing `SPB_*` names.
+  downstream-facing `SPB_*` names and the shared `PKR_VAR_*` names this repo
+  owns.
 - Lower-level generators MUST stay consumer-agnostic and continue returning
   values through stdout or explicit file paths.
 - The plaintext password, password hash, and SSH key passphrase MUST NOT be
@@ -83,10 +90,17 @@ public contract:
   caller can capture them in the same shell with `eval "$( ... )"`.
 - The repo MUST treat stdout from `bootstrap_credentials` as sensitive data and
   document that callers should avoid `set -x` or log-forwarding for that call.
+- When `GITHUB_ACTIONS=true`, the emitted shell snippet MUST register the
+  generated plaintext password, password hash, and SSH key passphrase with
+  GitHub `::add-mask::` commands before exporting them.
+- The GitHub masking path MUST treat `GITHUB_ACTIONS=true` as the primary
+  trigger and MAY fall back to other GitHub runner variables so masking remains
+  enabled by default in real GitHub workflows.
 - This module MUST rely on lower-level argument validation to prevent insecure
   settings rather than probing host FIPS state or other external compliance
   markers.
-- The calling shell owns all `PKR_VAR_*`, Kickstart, and provisioning mapping.
+- The calling shell owns only repo-specific `PKR_VAR_*`, Kickstart, and
+  provisioning mapping that this repo cannot know in advance.
 
 ## Exit Codes
 
@@ -111,8 +125,9 @@ Affected files/lines:
 - `src/generate_ssh_keypair/generate_ssh_keypair.sh`
 Requirement:
 - `bootstrap_credentials` MUST remain the only module that translates primitive
-  generator outputs into the repo's public bootstrap contract. Lower-level
-  modules MUST stay consumer-agnostic.
+  generator outputs into the repo's public bootstrap contract, including the
+  repo-owned `SPB_*` and direct `PKR_VAR_*` exports. Lower-level modules MUST
+  stay consumer-agnostic.
 Rationale:
 - This keeps downstream coupling in one place and prevents the primitive
   modules from growing repo-specific export semantics.
@@ -155,14 +170,17 @@ Affected files/lines:
 - `docs/DOWNSTREAM-MIGRATION.md`
 Requirement:
 - This repo MUST stop at generating the three secret values and the two key-file
-  paths. The calling shell or downstream repo MUST own mapping those values into
-  `PKR_VAR_*`, Kickstart, Packer, or provisioning-specific contracts.
+  paths plus the shared `PKR_VAR_deploy_user_password`,
+  `PKR_VAR_deploy_user_password_hash`, and `PKR_VAR_deploy_user_key` exports.
+  The calling shell or downstream repo MUST still own repo-specific extras such
+  as `PKR_VAR_deploy_user_name`, Kickstart, or provisioning-specific contracts.
 Rationale:
-- That boundary keeps this repo generic and prevents it from accumulating
-  downstream-specific convenience layers.
+- That boundary keeps this repo generic while still removing the repetitive
+  same-step Packer mapping glue every downstream consumer would otherwise carry.
 Verification:
 - Read the README and downstream migration doc and confirm they describe the
-  mapping step as a caller responsibility.
+  repo-owned direct `PKR_VAR_*` exports plus the narrower set of remaining
+  caller responsibilities.
 
 ## REQ-BOOTSTRAP-004
 
@@ -202,13 +220,18 @@ Affected files/lines:
 - `test/bootstrap_credentials_test.sh`
 - `test/release_bundle_verify.sh`
 Requirement:
-- The bootstrap flow MUST emit only shell-safe `export` assignments for
+- The bootstrap flow MUST emit only shell-safe stdout commands: conditional
+  GitHub `::add-mask::` registrations for the generated plaintext password,
+  password hash, and SSH key passphrase, followed by `export` assignments for
   `SPB_DEPLOY_USER_PASSWORD`, `SPB_DEPLOY_USER_PASSWORD_HASH`,
-  `SPB_SSH_KEY_PASSPHRASE`, `SPB_SSH_PRIVATE_KEY_FILE`, and
-  `SPB_SSH_PUBLIC_KEY_FILE` to stdout.
+  `SPB_SSH_KEY_PASSPHRASE`, `SPB_SSH_PRIVATE_KEY_FILE`,
+  `SPB_SSH_PUBLIC_KEY_FILE`, `PKR_VAR_deploy_user_password`,
+  `PKR_VAR_deploy_user_password_hash`, and `PKR_VAR_deploy_user_key`.
 Rationale:
-- This keeps bootstrap and Packer in the same shell step and removes cross-step
-  GitHub environment-file attack surface.
+- This keeps bootstrap and Packer in the same shell step, removes cross-step
+  GitHub environment-file attack surface, removes repetitive downstream
+  wrapper exports for the shared Packer inputs, and makes GitHub log masking a
+  built-in part of the contract instead of a caller footnote.
 Verification:
 - Run the bootstrap tests and confirm stdout contains only the documented
   `export ...` contract needed for same-step use.
@@ -271,9 +294,10 @@ Affected files/lines:
 - `test/release_bundle_verify.sh`
 Requirement:
 - The bundled release script MUST preserve the same minimal bootstrap contract
-  as the source modules: two key files on disk, five shell-exported values on
-  stdout, no convenience files, and no source-only dependency-loader scaffolding
-  copied from the `src/` modules.
+  as the source modules: two key files on disk, three conditional GitHub
+  mask-registration commands plus eight shell-exported values on stdout, no
+  convenience files, and no source-only dependency-loader scaffolding copied
+  from the `src/` modules.
 Rationale:
 - The published bundle is the downstream consumption path, so contract drift
   between source and bundle would defeat the simplification work.

@@ -11,18 +11,39 @@ if [[ -z ${_SPB_BUNDLE_MODE:-} ]]; then
   unset _spb_bootstrap_credentials_dir
 fi
 
+spb_bootstrap_emit_mask_command() {
+  local secret_value=${1}
+
+  printf "[[ \${GITHUB_ACTIONS:-} == %s || -n \${GITHUB_RUN_ID:-} || -n \${GITHUB_WORKFLOW:-} || -n \${GITHUB_ENV:-} || -n \${GITHUB_OUTPUT:-} ]] && printf %s %s\n" \
+    "$(spb_shell_quote 'true')" \
+    "$(spb_shell_quote '%s\n')" \
+    "$(spb_shell_quote "::add-mask::${secret_value}")" || return 1
+}
+
 spb_bootstrap_emit_shell_exports() {
   local generated_password=${1}
   local password_hash=${2}
   local generated_passphrase=${3}
   local private_key_path=${4}
   local public_key_path=${5}
+  local public_key_value
 
+  public_key_value=$(< "${public_key_path}") || {
+    printf 'error: bootstrap_credentials: failed to read generated public key %s\n' "${public_key_path}" >&2
+    return 1
+  }
+
+  spb_bootstrap_emit_mask_command "${generated_password}" || return 1
+  spb_bootstrap_emit_mask_command "${password_hash}" || return 1
+  spb_bootstrap_emit_mask_command "${generated_passphrase}" || return 1
   printf 'export SPB_DEPLOY_USER_PASSWORD=%s\n' "$(spb_shell_quote "${generated_password}")" || return 1
   printf 'export SPB_DEPLOY_USER_PASSWORD_HASH=%s\n' "$(spb_shell_quote "${password_hash}")" || return 1
   printf 'export SPB_SSH_KEY_PASSPHRASE=%s\n' "$(spb_shell_quote "${generated_passphrase}")" || return 1
   printf 'export SPB_SSH_PRIVATE_KEY_FILE=%s\n' "$(spb_shell_quote "${private_key_path}")" || return 1
   printf 'export SPB_SSH_PUBLIC_KEY_FILE=%s\n' "$(spb_shell_quote "${public_key_path}")" || return 1
+  printf 'export PKR_VAR_deploy_user_password=%s\n' "$(spb_shell_quote "${generated_password}")" || return 1
+  printf 'export PKR_VAR_deploy_user_password_hash=%s\n' "$(spb_shell_quote "${password_hash}")" || return 1
+  printf 'export PKR_VAR_deploy_user_key=%s\n' "$(spb_shell_quote "${public_key_value}")" || return 1
 }
 
 bootstrap_credentials() (

@@ -10,10 +10,12 @@ classes:
 - digits
 - special characters
 
-It validates the caller's requested class sets and minimum counts, draws the
-exact multiset of characters it needs from a secure random source, and then
-places those characters into a sequence that satisfies the configured
-same-class run limit.
+It validates the caller's requested class sets and minimum counts, then uses
+exact rejection sampling over the active character alphabet. Candidate
+passwords are drawn uniformly from the active alphabet, and prefixes that can
+no longer reach any valid completion are rejected immediately. This keeps the
+accepted output uniform over the constrained password space while preventing
+random false failures for satisfiable requests.
 
 This module is intentionally narrower than a generic password-policy engine. It
 does not support global character-exclusion overlays or arbitrary class
@@ -86,20 +88,21 @@ Class ranges:
 ## Algorithm
 
 1. Parse and validate options.
-2. Build one character pool per active class and one combined active pool.
-3. Draw the exact required characters for class minimums.
-4. Draw the remaining filler characters from the combined active pool.
-5. Reject class-count combinations that can never satisfy `--max-consecutive`.
-6. Place the pre-drawn characters into a sequence using rejection-sampled
-   class selection that preserves both class counts and the run limit.
-7. Emit the final password.
+2. Build one character pool per active class.
+3. Build a memoized feasibility map that answers whether a given generation
+   state still has any valid completion.
+4. Draw candidate characters uniformly from the active alphabet.
+5. Reject the candidate immediately when it would violate the run limit or
+   leave no valid completion for the remaining suffix.
+6. Emit the first fully valid candidate password.
 
 This module no longer depends on `fisher_yates_shuffle` or
 `enforce_max_consecutive`.
 
 ## Security Rules
 
-- randomness must come only from `get_random`
+- randomness must come only from `/dev/urandom` read through `od` and the
+  module's rejection-sampled draw helpers
 - no `$RANDOM`, `shuf`, or ad hoc external randomness sources are allowed
 - the function must run with `set +x`, `set -f`, and `LC_ALL=C`
 - no intermediate password material may be written to disk
@@ -114,7 +117,6 @@ This module no longer depends on `fisher_yates_shuffle` or
 
 ## Dependencies
 
-- `get_random`
 - `od`
 - `/dev/urandom` or the configured `GET_RANDOM_URANDOM_PATH`
 
@@ -153,11 +155,39 @@ Affected files/lines:
 - `test/generate_password_test.sh`
 Requirement:
 - `generate_password` MUST validate class ranges and counts before generation,
-  draw randomness only through `get_random`, and emit exactly one
-  newline-terminated password on stdout.
+  draw randomness only through its `/dev/urandom`-backed rejection-sampled
+  helpers, and emit exactly one newline-terminated password on stdout.
 Rationale:
 - The module's security story depends on strict validation, unbiased random
   draws, and minimal output surface.
 Verification:
 - Run the password tests and confirm success paths, invalid-class rejections,
   run-limit behavior, and repeated-run variation all pass.
+
+## REQ-PASSWORD-003
+
+Status: Satisfied
+Priority: P1
+Severity: High
+Domain: constrained-sampling-correctness
+Applies to: `--max-consecutive` handling
+Affected files/lines:
+- `src/generate_password/generate_password.sh`
+- `test/generate_password_test.sh`
+- `test/generate_password_exhaustive_test.sh`
+Requirement:
+- For satisfiable `--max-consecutive` requests, `generate_password` MUST sample
+  from the constrained output space without random false failures. The
+  implementation MUST preserve exact rejection-sampling semantics over the
+  valid password set and MUST reject impossible prefixes as soon as they are
+  detected.
+Rationale:
+- Retry-based or heuristic placement can turn valid requests into flaky
+  failures or silently bias the constrained output distribution. Exact
+  rejection sampling plus prefix-feasibility pruning keeps the proof story
+  clean while remaining implementable in Bash.
+Verification:
+- Run the password tests and the exhaustive password-space tests. Confirm
+  repeated `--max-consecutive 1` requests succeed, intentionally unsatisfiable
+  one-class requests still fail, and every emitted password belongs to the
+  brute-force valid set for the covered small spaces.

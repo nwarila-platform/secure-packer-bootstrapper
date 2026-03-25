@@ -1,16 +1,34 @@
 # secure-packer-bootstrapper
 
+[![Verify](https://github.com/NWarila/secure-packer-bootstrapper/actions/workflows/verify.yml/badge.svg)](https://github.com/NWarila/secure-packer-bootstrapper/actions/workflows/verify.yml)
+[![Release Artifact](https://github.com/NWarila/secure-packer-bootstrapper/actions/workflows/release-artifact.yml/badge.svg)](https://github.com/NWarila/secure-packer-bootstrapper/actions/workflows/release-artifact.yml)
+[MIT License](LICENSE)
+
 `secure-packer-bootstrapper` is a Bash bootstrapper for Linux image-build
 workflows. It generates the short-lived credentials needed to:
 
 - create a deploy user during install time
-- let the current shell map install inputs into `PKR_VAR_*`
+- export the shared `PKR_VAR_*` install inputs Packer needs immediately
 - keep the plaintext password available only for post-install sudo / become
 - generate a passphrase-protected SSH keypair for SSH-based provisioning
 
 This repo exists to replace long-lived static GitHub secrets with runtime
 bootstrap material that is generated, masked, reviewed, and cleaned up inside
 the workflow that needs it.
+
+## At A Glance
+
+- Problem solved: replace long-lived bootstrap secrets with same-step runtime
+  credential generation for image builds
+- Primary outputs: a plaintext deploy password, a SHA-512 crypt password hash
+  with `rounds=10000`, a passphrase-protected SSH keypair, and shell-safe
+  exports for immediate downstream use
+- Release artifacts: a standalone Bash bundle, a checksum, a machine-readable
+  release metadata manifest, and GitHub provenance attestations
+- Verified environments: Ubuntu 22.04 and 24.04 GitHub-hosted runners, plus
+  Rocky Linux 8, 9, and 10 official container jobs
+- Reviewer story: security boundaries, portability claims, and release trust
+  guarantees are documented explicitly instead of implied
 
 ## Supported Platforms
 
@@ -73,16 +91,23 @@ The bootstrap flow produces:
 
 The bootstrap shell-export contract is:
 
+- GitHub Actions mask-registration commands for:
+  - `SPB_DEPLOY_USER_PASSWORD`
+  - `SPB_DEPLOY_USER_PASSWORD_HASH`
+  - `SPB_SSH_KEY_PASSPHRASE`
 - `SPB_DEPLOY_USER_PASSWORD`
 - `SPB_DEPLOY_USER_PASSWORD_HASH`
 - `SPB_SSH_KEY_PASSPHRASE`
 - `SPB_SSH_PRIVATE_KEY_FILE`
 - `SPB_SSH_PUBLIC_KEY_FILE`
+- `PKR_VAR_deploy_user_password`
+- `PKR_VAR_deploy_user_password_hash`
+- `PKR_VAR_deploy_user_key`
 
 The intended downstream model is:
 
 - Kickstart uses the password hash with `user --iscrypted`
-- the current shell maps the exported hash into whatever `PKR_VAR_*` contract Packer expects
+- Packer reads the directly exported `PKR_VAR_*` values without a manual mapping step
 - SSH key authentication is used for login
 - the plaintext password is retained only for sudo / become
 
@@ -126,14 +151,23 @@ The bootstrapper is intended to run in the same shell step as Packer.
 Example:
 
 ```bash
-eval "$("${RUNNER_TEMP}/secure-packer-bootstrapper.sh" --output-dir "${RUNNER_TEMP}/spb")"
-export PKR_VAR_deploy_user_password_hash="${SPB_DEPLOY_USER_PASSWORD_HASH}"
+eval "$("${RUNNER_TEMP}/secure-packer-bootstrapper.sh")"
 packer build .
 ```
 
-The script prints shell-safe `export ...` lines to stdout. Capture that stdout
-with `eval "$( ... )"` in the same shell that will launch Packer. Do not run
-it under `set -x`, and do not pipe the output through logging commands.
+The script prints shell-safe `export ...` lines to stdout, including the
+shared `PKR_VAR_*` values Packer needs. In GitHub Actions, that same stdout
+stream automatically emits `::add-mask::` commands for the generated plaintext
+password, password hash, and SSH key passphrase before exporting them. The
+script treats `GITHUB_ACTIONS=true` as the primary signal and also falls back
+to other GitHub runner variables so masking stays on by default in real
+workflows. Capture that stdout with `eval "$( ... )"` in the same shell that
+will launch Packer. A normally executed child script cannot mutate its parent
+shell environment directly, so that `eval` step is the narrowest safe form of
+"run bootstrap, then run Packer" in one shell. The no-argument form writes the
+generated keypair under `artifacts/bootstrap`; pass `--output-dir` only if you
+want a different location. Do not run it under `set -x`, and do not pipe the
+output through logging commands.
 
 ## Artifact Sensitivity
 
@@ -161,22 +195,29 @@ Published releases provide:
 
 - `secure-packer-bootstrapper.sh`
 - `secure-packer-bootstrapper.sh.sha256`
+- `secure-packer-bootstrapper.release.json`
 - GitHub build provenance attestations for those release assets
 
 Downstream repos should monitor published releases, pin a reviewed release tag
 and checksum, and update them through pull requests rather than following
 branches directly.
 
-The release workflow now creates the release with both assets attached at
+The release workflow now creates the release with all three files attached at
 creation time and publishes GitHub build provenance attestations for them.
-The checksum proves file equality after download. The attestation proves the
-asset came from this repo's release workflow. This repo still does not claim
-immutable-release protection unless that GitHub repository setting is enabled.
+
+- The checksum proves file equality after download.
+- The metadata manifest records the release tag, commit SHA, bundle checksum,
+  workflow reference, and generation timestamp in one review-friendly file.
+- The attestation proves the asset came from this repo's release workflow.
+
+This repo still does not claim immutable-release protection unless that GitHub
+repository setting is enabled.
 
 Example verification flow after download:
 
 ```bash
 sha256sum -c secure-packer-bootstrapper.sh.sha256
+cat secure-packer-bootstrapper.release.json
 gh attestation verify secure-packer-bootstrapper.sh \
   --repo NWarila/secure-packer-bootstrapper \
   --signer-workflow NWarila/secure-packer-bootstrapper/.github/workflows/release-artifact.yml

@@ -494,14 +494,15 @@ Domain: ledger-authority
 Applies to: requirements-ledger placement and duplicate-ledger control
 Affected files/lines:
 - `src/generate_password/REQUIREMENTS.md:1-120`
-- `docs/REQUIREMENTS-generate_password.md:1-120`
+- `docs/archive/REQUIREMENTS-generate_password.md`
 - `docs/STUDENT-FIRST-STANDARDS.md:44-63`
 Authoritative sources:
 - `SR-14`
 Repository evidence:
 - `generate_password` currently has both a module-local requirements ledger and
   a second requirements document under `docs/`.
-- `docs/REQUIREMENTS-generate_password.md` now marks itself as superseded and
+- `docs/archive/REQUIREMENTS-generate_password.md` now marks itself as
+  superseded and
   points to `src/generate_password/REQUIREMENTS.md` as the authoritative ledger.
 - The docs copy is now reduced to a short legacy note that points readers to
   `src/generate_password/REQUIREMENTS.md` instead of preserving a second
@@ -519,7 +520,8 @@ Rationale:
 Acceptance criteria:
 - `src/generate_password/REQUIREMENTS.md` is treated as the authoritative
   module-local ledger for `generate_password`.
-- `docs/REQUIREMENTS-generate_password.md` is marked as legacy/superseded.
+- `docs/archive/REQUIREMENTS-generate_password.md` is marked as
+  legacy/superseded.
 - Future duplicated ledgers are either removed or clearly marked.
 Recommended change:
 - Keep the module-local ledger authoritative and preserve the docs copy only as
@@ -1163,11 +1165,11 @@ Requirement:
 - The top-level documentation MUST explain the split-secret design in plain
   language and provide one concise consumer map that distinguishes the deploy
   user's plaintext password, the SHA-512 crypt password hash, the SSH private
-  key and public key, the SSH key passphrase, the `PKR_VAR_*` install-time
-  inputs, the `SPB_*` retained file-path exports, and the metadata files. The
-  docs MUST make it obvious which values are for Kickstart/Packer install-time
-  use, which are for SSH login or provisioning, which are for sudo / become,
-  and which are reference metadata.
+  key and public key, the SSH key passphrase, the direct `PKR_VAR_*`
+  install-time inputs, the remaining `SPB_*` same-step exports, and the
+  metadata files. The docs MUST make it obvious which values are for
+  Kickstart/Packer install-time use, which are for SSH login or provisioning,
+  which are for sudo / become, and which are reference metadata.
 Rationale:
 - A mixed-audience security repo becomes much easier to trust when the
   first-contact documentation makes the secret split explicit instead of leaving the
@@ -1180,8 +1182,9 @@ Acceptance criteria:
   artifact-role map or glossary that explains each generated secret or metadata
   file, its downstream consumer, and its intended use phase.
 - The docs explicitly say that the plaintext password is retained for sudo /
-  become, not for Kickstart user creation, and that `SPB_*` exports are file
-  paths rather than raw secret values.
+  become, not for Kickstart user creation, and that the repo now exports the
+  shared `PKR_VAR_*` values directly while reserving `SPB_*` for the remaining
+  same-step secret and file-path values.
 - The public docs stay synchronized with the behavior asserted by
   `test/bootstrap_credentials_test.sh`.
 Recommended change:
@@ -1485,13 +1488,15 @@ Authoritative sources:
 - `SR-37`
 - `SR-14`
 Repository evidence:
-- The release workflow now creates the release with the script and checksum
-  attached at creation time instead of uploading assets after publication.
+- The release workflow now creates the release with the script, checksum, and
+  machine-readable release metadata manifest attached at creation time instead
+  of uploading assets after publication.
 - The same workflow now publishes GitHub build provenance attestations for the
   release assets and declares the required `attestations: write` and
   `id-token: write` permissions only in the publishing job.
 - README and the downstream migration guide now tell consumers to pin the
-  published release, verify the checksum for file equality, verify the GitHub
+  published release, verify the checksum for file equality, inspect the
+  metadata manifest for tag / commit / workflow context, verify the GitHub
   attestation for provenance, and treat immutable-release protection as a
   separate setting that is not claimed unless explicitly enabled.
 Applicability analysis:
@@ -1625,15 +1630,16 @@ Severity: Medium
 Domain: legacy-snapshot-hygiene
 Applies to: retained superseded ledgers, historical snapshots, and review-surface safety
 Affected files/lines:
-- `docs/REQUIREMENTS-generate_password.md:1-32`
-- `docs/REQUIREMENTS-generate_password.md:458-470`
+- `docs/archive/REQUIREMENTS-generate_password.md`
+- `src/generate_password/REQUIREMENTS.md`
 - `docs/REQUIREMENTS-repo.md:173-176`
 - `docs/STUDENT-FIRST-STANDARDS.md:112-120`
 Authoritative sources:
 - `SR-14`
 - `SR-29`
 Repository evidence:
-- `docs/REQUIREMENTS-generate_password.md` now declares itself a legacy,
+- `docs/archive/REQUIREMENTS-generate_password.md` now declares itself a
+  legacy,
   superseded snapshot and points readers to
   `src/generate_password/REQUIREMENTS.md`.
 - The legacy file is now reduced to a short superseded note that points readers
@@ -1677,7 +1683,8 @@ Acceptance criteria:
   superseded docs are either removed from the active review surface or clearly
   marked as historical nearby.
 Recommended change:
-- Either collapse `docs/REQUIREMENTS-generate_password.md` to a brief legacy
+- Either collapse `docs/archive/REQUIREMENTS-generate_password.md` to a brief
+  legacy
   note plus an authoritative-link pointer, or keep the preserved body only
   under an explicitly titled historical section or archive location.
 Verification method:

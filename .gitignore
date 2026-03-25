@@ -2,7 +2,7 @@
 # Allowlist-style ignore policy:
 # ignore everything by default, then explicitly include repo-owned files.
 #
-*
+**
 
 !/.editorconfig
 !/.gitattributes
@@ -17,18 +17,15 @@
 !/Makefile
 !/README.md
 !/SECURITY.md
-!/.vscode/
-!/.vscode/extensions.json
-!/.vscode/settings.json
-!/.vscode/tasks.json
 
 !/bin/
 !/bin/secure-packer-bootstrapper
 
 !/docs/
+!/docs/archive/
+!/docs/archive/REQUIREMENTS-generate_password.md
 !/docs/DOWNSTREAM-MIGRATION.md
 !/docs/MODULE-DECOMPOSITION.md
-!/docs/REQUIREMENTS-generate_password.md
 !/docs/REQUIREMENTS-repo.md
 !/docs/STUDENT-FIRST-STANDARDS.md
 

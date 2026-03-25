@@ -43,12 +43,41 @@ jobs:
       - name: Create Release Checksum
         run: sha256sum dist/secure-packer-bootstrapper.sh > dist/secure-packer-bootstrapper.sh.sha256
 
+      - name: Create Release Metadata
+        env:
+          INPUT_RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          set -euo pipefail
+
+          if [[ "${GITHUB_EVENT_NAME}" == "push" ]]; then
+            release_tag="${GITHUB_REF_NAME}"
+          else
+            release_tag="${INPUT_RELEASE_TAG}"
+          fi
+
+          bundle_sha256="$(cut -d ' ' -f1 dist/secure-packer-bootstrapper.sh.sha256)"
+          generated_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+
+          cat > dist/secure-packer-bootstrapper.release.json <<EOF
+          {
+            "artifact": "secure-packer-bootstrapper.sh",
+            "tag": "${release_tag}",
+            "commit": "${GITHUB_SHA}",
+            "bundle_sha256": "${bundle_sha256}",
+            "workflow": "${GITHUB_WORKFLOW}",
+            "workflow_ref": "${GITHUB_WORKFLOW_REF}",
+            "run_id": "${GITHUB_RUN_ID}",
+            "generated_at": "${generated_at}"
+          }
+          EOF
+
       - name: Attest Release Assets
         uses: actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a # v3
         with:
           subject-path: |
             dist/secure-packer-bootstrapper.sh
             dist/secure-packer-bootstrapper.sh.sha256
+            dist/secure-packer-bootstrapper.release.json
 
       - name: Create GitHub Release
         env:
@@ -62,6 +91,7 @@ jobs:
             gh release create "${release_tag}" \
               dist/secure-packer-bootstrapper.sh \
               dist/secure-packer-bootstrapper.sh.sha256 \
+              dist/secure-packer-bootstrapper.release.json \
               --verify-tag \
               --title "${release_tag}" \
               --generate-notes
@@ -70,6 +100,7 @@ jobs:
             gh release create "${release_tag}" \
               dist/secure-packer-bootstrapper.sh \
               dist/secure-packer-bootstrapper.sh.sha256 \
+              dist/secure-packer-bootstrapper.release.json \
               --target "${GITHUB_SHA}" \
               --title "${release_tag}" \
               --generate-notes
