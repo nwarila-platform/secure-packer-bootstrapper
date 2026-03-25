@@ -12,6 +12,11 @@ command -v ssh-keygen >/dev/null 2>&1 || skip_test 'ssh-keygen is required for b
 temp_dir=$(make_temp_dir)
 trap 'rm -rf "${temp_dir}"' EXIT
 
+# Assigned via eval of bootstrap output below.
+PKR_VAR_deploy_user_password=''
+PKR_VAR_deploy_user_password_hash=''
+PKR_VAR_deploy_user_key=''
+
 run_capture bootstrap_credentials --output-dir "${temp_dir}/artifacts"
 assert_status 0
 assert_stdout_contains '::add-mask::'

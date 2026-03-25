@@ -14,6 +14,11 @@ assert_file_not_contains "${bundle_path}" '_spb_generate_password_dir='
 temp_dir=$(make_temp_dir)
 trap 'rm -rf "${temp_dir}"' EXIT
 
+# Assigned via eval of bundle output below.
+PKR_VAR_deploy_user_password=''
+PKR_VAR_deploy_user_password_hash=''
+PKR_VAR_deploy_user_key=''
+
 run_capture bash "${bundle_path}" --output-dir "${temp_dir}/artifacts"
 assert_status 0
 assert_stdout_contains '::add-mask::'
