@@ -11,12 +11,15 @@
 !/.github/dependabot.yml
 !/.github/workflows/
 !/.github/workflows/release-artifact.yml
+!/.github/workflows/release-please.yaml
 !/.github/workflows/verify.yml
 !/.gitignore
+!/.release-please-manifest.json
 !/LICENSE
 !/Makefile
 !/README.md
 !/SECURITY.md
+!/release-please-config.json
 
 !/bin/
 !/bin/secure-packer-bootstrapper
