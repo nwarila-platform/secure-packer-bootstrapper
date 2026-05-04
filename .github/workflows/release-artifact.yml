@@ -32,6 +32,44 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Resolve release tag and align working tree
+        env:
+          INPUT_RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          set -euo pipefail
+
+          # Determine the tag this run is publishing.
+          if [[ "${GITHUB_EVENT_NAME}" == "push" ]]; then
+            release_tag="${GITHUB_REF_NAME}"
+          else
+            release_tag="${INPUT_RELEASE_TAG}"
+            if [[ -z "${release_tag}" ]]; then
+              echo "::error::release_tag input is required for workflow_dispatch."
+              exit 1
+            fi
+          fi
+
+          # Resolve the commit the tag points at (works for annotated and lightweight tags).
+          # The tag must already exist; this workflow publishes existing tags rather than
+          # creating new ones.
+          if ! git rev-parse --quiet --verify "refs/tags/${release_tag}" >/dev/null; then
+            echo "::error::Tag '${release_tag}' does not exist on origin."
+            exit 1
+          fi
+          release_commit="$(git rev-list -n 1 "refs/tags/${release_tag}")"
+
+          # In workflow_dispatch the runner's working tree is at the dispatched ref (often
+          # main), which can drift from the tag. Realign it so the build below produces
+          # bytes from the tag's source state and the release metadata records the tag's
+          # commit, not whatever HEAD happened to be at dispatch time.
+          if [[ "${GITHUB_SHA}" != "${release_commit}" ]]; then
+            echo "Realigning working tree from ${GITHUB_SHA} to ${release_tag} (${release_commit})"
+            git -c advice.detachedHead=false checkout "${release_commit}"
+          fi
+
+          echo "RELEASE_TAG=${release_tag}" >> "${GITHUB_ENV}"
+          echo "RELEASE_COMMIT=${release_commit}" >> "${GITHUB_ENV}"
+
       - name: Install Dependencies
         run: |
           sudo apt-get update
@@ -44,16 +82,8 @@ jobs:
         run: sha256sum dist/secure-packer-bootstrapper.sh > dist/secure-packer-bootstrapper.sh.sha256
 
       - name: Create Release Metadata
-        env:
-          INPUT_RELEASE_TAG: ${{ inputs.release_tag }}
         run: |
           set -euo pipefail
-
-          if [[ "${GITHUB_EVENT_NAME}" == "push" ]]; then
-            release_tag="${GITHUB_REF_NAME}"
-          else
-            release_tag="${INPUT_RELEASE_TAG}"
-          fi
 
           bundle_sha256="$(cut -d ' ' -f1 dist/secure-packer-bootstrapper.sh.sha256)"
           generated_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
@@ -61,8 +91,8 @@ jobs:
           cat > dist/secure-packer-bootstrapper.release.json <<EOF
           {
             "artifact": "secure-packer-bootstrapper.sh",
-            "tag": "${release_tag}",
-            "commit": "${GITHUB_SHA}",
+            "tag": "${RELEASE_TAG}",
+            "commit": "${RELEASE_COMMIT}",
             "bundle_sha256": "${bundle_sha256}",
             "workflow": "${GITHUB_WORKFLOW}",
             "workflow_ref": "${GITHUB_WORKFLOW_REF}",
@@ -82,26 +112,13 @@ jobs:
       - name: Create GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
-          INPUT_RELEASE_TAG: ${{ inputs.release_tag }}
         run: |
           set -euo pipefail
-
-          if [[ "${GITHUB_EVENT_NAME}" == "push" ]]; then
-            release_tag="${GITHUB_REF_NAME}"
-            gh release create "${release_tag}" \
-              dist/secure-packer-bootstrapper.sh \
-              dist/secure-packer-bootstrapper.sh.sha256 \
-              dist/secure-packer-bootstrapper.release.json \
-              --verify-tag \
-              --title "${release_tag}" \
-              --generate-notes
-          else
-            release_tag="${INPUT_RELEASE_TAG}"
-            gh release create "${release_tag}" \
-              dist/secure-packer-bootstrapper.sh \
-              dist/secure-packer-bootstrapper.sh.sha256 \
-              dist/secure-packer-bootstrapper.release.json \
-              --target "${GITHUB_SHA}" \
-              --title "${release_tag}" \
-              --generate-notes
-          fi
+          gh release create "${RELEASE_TAG}" \
+            dist/secure-packer-bootstrapper.sh \
+            dist/secure-packer-bootstrapper.sh.sha256 \
+            dist/secure-packer-bootstrapper.release.json \
+            --target "${RELEASE_COMMIT}" \
+            --verify-tag \
+            --title "${RELEASE_TAG}" \
+            --generate-notes
